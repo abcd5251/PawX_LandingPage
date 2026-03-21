@@ -1,7 +1,6 @@
 import { Button } from "@/components/ui/button";
 import logo from "@/assets/logo.jpg";
 import { Sparkles } from "lucide-react";
-import { Link } from "react-router-dom";
 
 const Navbar = () => {
   return (
@@ -38,10 +37,10 @@ const Navbar = () => {
 
         {/* 简洁按钮 */}
         <Button size="sm" className="rounded-full group" asChild>
-          <Link to="/credit-hub">
+          <a href="https://t.me/pawx_ai" target="_blank" rel="noreferrer">
             <Sparkles className="w-3.5 h-3.5 mr-1.5 group-hover:rotate-12 transition-transform" />
             Start
-          </Link>
+          </a>
         </Button>
       </div>
     </nav>
