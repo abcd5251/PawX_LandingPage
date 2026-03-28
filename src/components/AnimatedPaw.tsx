@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
+import { motion, type Variants } from "framer-motion";
 
 interface AnimatedPawProps {
   label: string;
@@ -13,7 +13,7 @@ const AnimatedPaw = ({ label, className = "", flip = false, rotate = 0 }: Animat
   const [isActive, setIsActive] = useState(false);
 
   // Animation variants for vertical floating
-  const floatingVariants = {
+  const floatingVariants: Variants = {
     initial: {
       y: [0, -20, 0],
       transition: {

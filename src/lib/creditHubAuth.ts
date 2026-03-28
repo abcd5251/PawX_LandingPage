@@ -1,15 +1,49 @@
-import type { UserData } from "@/components/Dashboard";
-
-export interface AuthenticatedXUser {
+export interface XSessionUser {
   twitterId: string;
   name: string;
   handle: string;
   avatar: string;
+  profileUrl: string;
 }
+
+export interface ApiKeyProfile {
+  twitterId: string;
+  name: string;
+  handle: string;
+  avatar: string;
+  profileUrl: string;
+  baseCredits: number;
+  telegramBonus: number;
+  referralBonus: number;
+  totalCredits: number;
+  creditsUsed: number;
+  remainingCredits: number;
+  hasActiveApiKey: boolean;
+  apiKeyPreview: string;
+  apiKeyLast4: string;
+  telegramConnected: boolean;
+  telegramUsername: string;
+  referralCode: string;
+  referralCount: number;
+  statusLabel: string;
+}
+
+export interface ApiKeyMutationResult {
+  apiKey: string;
+  profile: ApiKeyProfile;
+}
+
+export interface ProtectedApiResult {
+  ok: boolean;
+  status: number;
+  body: string;
+}
+
+export const AUTH_REDIRECT_STORAGE_KEY = "pawx-credit-hub-auth-redirect";
 
 type JsonRecord = Record<string, unknown>;
 
-class CreditHubApiError extends Error {
+export class CreditHubApiError extends Error {
   status: number;
 
   constructor(message: string, status: number) {
@@ -20,6 +54,7 @@ class CreditHubApiError extends Error {
 }
 
 const DEFAULT_API_BASE_URL = "http://localhost:3001";
+const DEFAULT_AVATAR = "https://api.dicebear.com/7.x/thumbs/svg?seed=pawx-user";
 
 const toRecord = (value: unknown): JsonRecord | null => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -33,10 +68,20 @@ const readPath = (source: unknown, path: string[]) => {
   let current: unknown = source;
 
   for (const segment of path) {
+    if (Array.isArray(current)) {
+      const index = Number(segment);
+      if (!Number.isInteger(index)) {
+        return undefined;
+      }
+      current = current[index];
+      continue;
+    }
+
     const record = toRecord(current);
     if (!record) {
       return undefined;
     }
+
     current = record[segment];
   }
 
@@ -96,85 +141,54 @@ const normalizeHandle = (value: string, twitterId: string) => {
   if (!value) {
     return `@${twitterId}`;
   }
+
   return value.startsWith("@") ? value : `@${value}`;
 };
 
-const buildAvatar = (sessionUser: Partial<AuthenticatedXUser>) => {
-  if (sessionUser.avatar) {
-    return sessionUser.avatar;
+const buildProfileUrl = (handle: string, twitterId: string, profileUrl?: string) => {
+  if (profileUrl) {
+    return profileUrl;
   }
 
-  if (sessionUser.twitterId) {
-    return `https://api.dicebear.com/7.x/thumbs/svg?seed=${sessionUser.twitterId}`;
+  const normalizedHandle = handle.startsWith("@") ? handle.slice(1) : handle;
+  if (normalizedHandle) {
+    return `https://x.com/${normalizedHandle}`;
   }
 
-  return "https://api.dicebear.com/7.x/thumbs/svg?seed=pawx-user";
-};
-
-const buildDailyUsage = (payload: unknown): { date: string; used: number }[] => {
-  const raw =
-    pickFirst(payload, [["dailyUsage"], ["usage", "daily"], ["data", "dailyUsage"], ["user", "dailyUsage"]]) ?? [];
-
-  if (!Array.isArray(raw)) {
-    return [];
+  if (twitterId) {
+    return `https://x.com/i/user/${twitterId}`;
   }
 
-  return raw
-    .map((entry) => {
-      const record = toRecord(entry);
-      if (!record) {
-        return null;
-      }
-
-      const date = typeof record.date === "string" ? record.date : "";
-      const used = typeof record.used === "number" ? record.used : Number(record.used ?? 0);
-
-      if (!date || !Number.isFinite(used)) {
-        return null;
-      }
-
-      return { date, used };
-    })
-    .filter((entry): entry is { date: string; used: number } => Boolean(entry));
+  return "https://x.com";
 };
 
-const toUserData = (sessionUser: AuthenticatedXUser, payload: unknown): UserData => {
-  const telegramUsername = readString(payload, [["telegramUsername"], ["user", "telegramUsername"], ["telegram", "username"]]);
-  const referralCode = readString(payload, [["referralCode"], ["user", "referralCode"], ["referral", "code"]]);
+const buildAvatar = (twitterId: string, avatar?: string) => {
+  if (avatar) {
+    return avatar;
+  }
 
-  return {
-    name: readString(payload, [["name"], ["user", "name"]], sessionUser.name),
-    handle: normalizeHandle(readString(payload, [["handle"], ["screenName"], ["username"], ["user", "handle"], ["user", "username"]], sessionUser.handle), sessionUser.twitterId),
-    avatar: readString(payload, [["avatar"], ["avatarUrl"], ["profileImageUrl"], ["user", "avatar"], ["user", "avatarUrl"], ["user", "profileImageUrl"]], sessionUser.avatar),
-    twitterConnected: true,
-    telegramConnected: readBoolean(
-      payload,
-      [["telegramConnected"], ["user", "telegramConnected"], ["telegram", "connected"]],
-      Boolean(telegramUsername),
-    ),
-    telegramUsername,
-    referralCode,
-    baseCredits: readNumber(payload, [["baseCredits"], ["credits", "base"], ["user", "baseCredits"]], 2500),
-    telegramBonus: readNumber(payload, [["telegramBonus"], ["credits", "telegramBonus"], ["user", "telegramBonus"]], 0),
-    referralBonus: readNumber(payload, [["referralBonus"], ["credits", "referralBonus"], ["user", "referralBonus"]], 0),
-    creditsUsed: readNumber(payload, [["creditsUsed"], ["credits", "used"], ["user", "creditsUsed"]], 0),
-    referralCount: readNumber(payload, [["referralCount"], ["referral", "count"], ["user", "referralCount"]], 0),
-    dailyUsage: buildDailyUsage(payload),
-  };
+  if (twitterId) {
+    return `https://api.dicebear.com/7.x/thumbs/svg?seed=${twitterId}`;
+  }
+
+  return DEFAULT_AVATAR;
 };
 
-const parseJson = async (response: Response) => {
+const readResponseBody = async (response: Response) => {
   const contentType = response.headers.get("content-type") ?? "";
-  if (!contentType.includes("application/json")) {
-    return null;
+
+  if (contentType.includes("application/json")) {
+    return response.json();
   }
 
-  return response.json();
+  const text = await response.text();
+  return text || null;
 };
 
 const buildErrorMessage = async (response: Response) => {
-  const payload = await parseJson(response);
+  const payload = await readResponseBody(response);
   const message =
+    (typeof payload === "string" ? payload : "") ||
     readString(payload, [["message"], ["error"], ["errors", "0", "message"]]) ||
     `Request failed with status ${response.status}`;
 
@@ -182,13 +196,17 @@ const buildErrorMessage = async (response: Response) => {
 };
 
 const apiRequest = async <T>(path: string, init?: RequestInit) => {
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+
+  if (init?.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
     ...init,
+    headers,
   });
 
   if (!response.ok) {
@@ -199,88 +217,326 @@ const apiRequest = async <T>(path: string, init?: RequestInit) => {
     return null as T;
   }
 
-  return (await parseJson(response)) as T;
+  return (await readResponseBody(response)) as T;
+};
+
+const readApiKeyValue = (payload: unknown) =>
+  readString(payload, [
+    ["apiKey"],
+    ["key"],
+    ["data", "apiKey"],
+    ["data", "key"],
+    ["apiKeyData", "value"],
+  ]);
+
+const readApiKeyLast4 = (payload: unknown, apiKeyPreview: string, fullApiKey = "") => {
+  const explicitLast4 = readString(payload, [
+    ["apiKeyLast4"],
+    ["last4"],
+    ["apiKey", "last4"],
+    ["data", "apiKeyLast4"],
+    ["apiKeyData", "last4"],
+  ]);
+
+  if (explicitLast4) {
+    return explicitLast4.slice(-4);
+  }
+
+  if (fullApiKey) {
+    return fullApiKey.slice(-4);
+  }
+
+  const previewTail = apiKeyPreview.replace(/[^a-zA-Z0-9]+/g, "");
+  return previewTail ? previewTail.slice(-4) : "";
 };
 
 export const getApiBaseUrl = () => {
-  const configured = import.meta.env.VITE_PAWX_API_BASE_URL;
+  const configured = import.meta.env.VITE_PAWX_API_BASE_URL || import.meta.env.VITE_API_BASE_URL;
   return trimTrailingSlash(configured || DEFAULT_API_BASE_URL);
 };
 
-export const getAppBaseUrl = () => {
-  const configured = import.meta.env.VITE_PAWX_APP_URL;
-  if (configured) {
-    return trimTrailingSlash(configured);
+export const getXAuthorizationUrl = () => `${getApiBaseUrl()}/api/v1/auth/x/start`;
+
+export const toXSessionUser = (payload: unknown) => {
+  const twitterId = readString(
+    payload,
+    [["twitterId"], ["id"], ["userId"], ["session", "twitterId"], ["session", "id"], ["session", "userId"], ["user", "twitterId"], ["user", "id"], ["user", "userId"]],
+  );
+  const authenticated = readBoolean(payload, [["authenticated"], ["isAuthenticated"], ["session", "authenticated"]], Boolean(twitterId));
+
+  if (!authenticated) {
+    return null;
   }
 
-  if (typeof window !== "undefined") {
-    return trimTrailingSlash(window.location.origin);
-  }
+  const fallbackTwitterId = twitterId || readString(payload, [["username"], ["session", "username"], ["user", "username"]], "x-session");
 
-  return "http://localhost:8080";
+  const name = readString(
+    payload,
+    [["name"], ["displayName"], ["session", "name"], ["session", "displayName"], ["user", "name"], ["user", "displayName"]],
+    "X account",
+  );
+  const handle = normalizeHandle(
+    readString(
+      payload,
+      [
+        ["handle"],
+        ["screenName"],
+        ["screen_name"],
+        ["username"],
+        ["session", "handle"],
+        ["session", "screenName"],
+        ["session", "screen_name"],
+        ["session", "username"],
+        ["user", "handle"],
+        ["user", "screenName"],
+        ["user", "screen_name"],
+        ["user", "username"],
+      ],
+      fallbackTwitterId,
+    ),
+    fallbackTwitterId,
+  );
+  const avatar = buildAvatar(
+    fallbackTwitterId,
+    readString(
+      payload,
+      [
+        ["avatar"],
+        ["avatarUrl"],
+        ["profileImageUrl"],
+        ["profile_image_url"],
+        ["profile_image_url_https"],
+        ["session", "avatar"],
+        ["session", "avatarUrl"],
+        ["session", "profileImageUrl"],
+        ["session", "profile_image_url"],
+        ["session", "profile_image_url_https"],
+        ["user", "avatar"],
+        ["user", "avatarUrl"],
+        ["user", "profileImageUrl"],
+        ["user", "profile_image_url"],
+        ["user", "profile_image_url_https"],
+      ],
+    ),
+  );
+  const profileUrl = buildProfileUrl(
+    handle,
+    fallbackTwitterId,
+    readString(payload, [["profileUrl"], ["profileURL"], ["session", "profileUrl"], ["session", "profileURL"], ["user", "profileUrl"], ["user", "profileURL"]]),
+  );
+
+  return { twitterId: fallbackTwitterId, name, handle, avatar, profileUrl };
 };
 
-export const getCreditHubCallbackUrl = () => `${getAppBaseUrl()}/credit-hub/auth/callback`;
+export const buildFallbackProfile = (sessionUser: XSessionUser): ApiKeyProfile => ({
+  twitterId: sessionUser.twitterId,
+  name: sessionUser.name,
+  handle: sessionUser.handle,
+  avatar: sessionUser.avatar,
+  profileUrl: sessionUser.profileUrl,
+  baseCredits: 0,
+  telegramBonus: 0,
+  referralBonus: 0,
+  totalCredits: 0,
+  creditsUsed: 0,
+  remainingCredits: 0,
+  hasActiveApiKey: false,
+  apiKeyPreview: "",
+  apiKeyLast4: "",
+  telegramConnected: false,
+  telegramUsername: "",
+  referralCode: "",
+  referralCount: 0,
+  statusLabel: "Signed in",
+});
 
-export const getXAuthorizationUrl = () => {
-  const redirectUri = encodeURIComponent(getCreditHubCallbackUrl());
-  return `${getApiBaseUrl()}/api/v1/auth/x/start?redirectUri=${redirectUri}`;
+export const toApiKeyProfile = (sessionUser: XSessionUser, payload: unknown): ApiKeyProfile => {
+  const twitterId = readString(payload, [["twitterId"], ["id"], ["userId"], ["user", "twitterId"], ["user", "id"], ["user", "userId"]], sessionUser.twitterId);
+  const name = readString(payload, [["name"], ["displayName"], ["user", "name"], ["user", "displayName"]], sessionUser.name);
+  const handle = normalizeHandle(
+    readString(
+      payload,
+      [["handle"], ["screenName"], ["screen_name"], ["username"], ["user", "handle"], ["user", "screenName"], ["user", "screen_name"], ["user", "username"]],
+      sessionUser.handle,
+    ),
+    twitterId,
+  );
+  const avatar = buildAvatar(
+    twitterId,
+    readString(
+      payload,
+      [
+        ["avatar"],
+        ["avatarUrl"],
+        ["profileImageUrl"],
+        ["profile_image_url"],
+        ["profile_image_url_https"],
+        ["user", "avatar"],
+        ["user", "avatarUrl"],
+        ["user", "profileImageUrl"],
+        ["user", "profile_image_url"],
+        ["user", "profile_image_url_https"],
+      ],
+      sessionUser.avatar,
+    ),
+  );
+  const profileUrl = buildProfileUrl(
+    handle,
+    twitterId,
+    readString(payload, [["profileUrl"], ["profileURL"], ["user", "profileUrl"], ["user", "profileURL"]], sessionUser.profileUrl),
+  );
+  const baseCredits = readNumber(
+    payload,
+    [["baseCredits"], ["credits", "base"], ["credits", "granted"], ["account", "baseCredits"], ["account", "credits"], ["user", "baseCredits"]],
+    0,
+  );
+  const telegramBonus = readNumber(
+    payload,
+    [["telegramBonus"], ["credits", "telegramBonus"], ["credits", "telegram"], ["account", "telegramBonus"], ["user", "telegramBonus"]],
+    0,
+  );
+  const referralBonus = readNumber(
+    payload,
+    [["referralBonus"], ["credits", "referralBonus"], ["credits", "referral"], ["account", "referralBonus"], ["user", "referralBonus"]],
+    0,
+  );
+  const creditsUsed = readNumber(
+    payload,
+    [["creditsUsed"], ["credits", "used"], ["usage", "used"], ["account", "creditsUsed"], ["user", "creditsUsed"]],
+    0,
+  );
+  const totalCredits = readNumber(
+    payload,
+    [["totalCredits"], ["credits", "total"], ["credits"], ["account", "totalCredits"], ["account", "credits"], ["user", "totalCredits"]],
+    baseCredits + telegramBonus + referralBonus,
+  );
+  const remainingCredits = readNumber(
+    payload,
+    [["remainingCredits"], ["credits", "remaining"], ["credits", "available"], ["credits"], ["account", "remainingCredits"], ["account", "credits"], ["user", "remainingCredits"]],
+    totalCredits > 0 ? Math.max(totalCredits - creditsUsed, 0) : Math.max(baseCredits + telegramBonus + referralBonus - creditsUsed, 0),
+  );
+  const apiKeyPreview = readString(payload, [["apiKeyPreview"], ["apiKey", "preview"], ["keyPreview"], ["data", "apiKeyPreview"]]);
+  const apiKeyLast4 = readApiKeyLast4(payload, apiKeyPreview);
+  const hasActiveApiKey = readBoolean(
+    payload,
+    [["hasActiveApiKey"], ["apiKey", "hasActive"], ["apiKey", "active"], ["data", "hasActiveApiKey"]],
+    Boolean(apiKeyPreview || apiKeyLast4),
+  );
+  const telegramUsername = readString(payload, [["telegramUsername"], ["user", "telegramUsername"], ["telegram", "username"]]);
+  const referralCode = readString(payload, [["referralCode"], ["user", "referralCode"], ["referral", "code"]]);
+
+  return {
+    twitterId,
+    name,
+    handle,
+    avatar,
+    profileUrl,
+    baseCredits,
+    telegramBonus,
+    referralBonus,
+    totalCredits,
+    creditsUsed,
+    remainingCredits,
+    hasActiveApiKey,
+    apiKeyPreview,
+    apiKeyLast4,
+    telegramConnected: readBoolean(
+      payload,
+      [["telegramConnected"], ["user", "telegramConnected"], ["telegram", "connected"]],
+      Boolean(telegramUsername),
+    ),
+    telegramUsername,
+    referralCode,
+    referralCount: readNumber(payload, [["referralCount"], ["referral", "count"], ["user", "referralCount"]], 0),
+    statusLabel:
+      readString(payload, [["status"], ["accountStatus"], ["user", "status"], ["apiKey", "status"]]) ||
+      (hasActiveApiKey ? "API key active" : "Signed in"),
+  };
 };
 
-export const getAuthenticatedXUser = async () => {
+export const fetchXSession = async () => {
   try {
     const payload = await apiRequest<unknown>("/api/v1/auth/x/session", { method: "GET" });
-    const twitterId = readString(payload, [["twitterId"], ["id"], ["user", "twitterId"], ["user", "id"]]);
-
-    if (!twitterId) {
-      return null;
-    }
-
-    const name = readString(payload, [["name"], ["user", "name"]], twitterId);
-    const handle = normalizeHandle(
-      readString(payload, [["handle"], ["screenName"], ["username"], ["user", "handle"], ["user", "screenName"], ["user", "username"]], twitterId),
-      twitterId,
-    );
-    const avatar = buildAvatar({
-      twitterId,
-      avatar: readString(payload, [["avatar"], ["avatarUrl"], ["profileImageUrl"], ["user", "avatar"], ["user", "avatarUrl"], ["user", "profileImageUrl"]]),
-    });
-
-    return { twitterId, name, handle, avatar };
+    return toXSessionUser(payload);
   } catch (error) {
     if (error instanceof CreditHubApiError && error.status === 401) {
       return null;
     }
+
     throw error;
   }
 };
 
-export const provisionCreditHubUser = async (sessionUser: AuthenticatedXUser) => {
-  const payload = await apiRequest<unknown>("/api/v1/twitterUsers/api-keys", {
-    method: "POST",
-    body: JSON.stringify({ twitterId: sessionUser.twitterId }),
-  });
-
-  return toUserData(sessionUser, payload);
+export const logoutXSession = async () => {
+  await apiRequest("/api/v1/auth/x/logout", { method: "POST" });
 };
 
-export const bootstrapCreditHubUser = async () => {
-  const sessionUser = await getAuthenticatedXUser();
-  if (!sessionUser) {
-    return null;
+export const fetchApiKeyProfile = async (sessionUser: XSessionUser) => {
+  const payload = await apiRequest<unknown>("/api/v1/twitterUsers/api-keys/me", { method: "GET" });
+  return toApiKeyProfile(sessionUser, payload);
+};
+
+export const createApiKey = async (sessionUser: XSessionUser, rotateExisting = false): Promise<ApiKeyMutationResult> => {
+  const payload = await apiRequest<unknown>("/api/v1/twitterUsers/api-keys", {
+    method: "POST",
+    body: JSON.stringify(rotateExisting ? { rotateExisting: true } : {}),
+  });
+  const apiKey = readApiKeyValue(payload);
+
+  if (!apiKey) {
+    throw new Error("後端沒有回傳新的 API key，請確認建立或 rotate API key 的回應格式。");
   }
 
-  return provisionCreditHubUser(sessionUser);
+  return {
+    apiKey,
+    profile: {
+      ...toApiKeyProfile(sessionUser, payload),
+      apiKeyLast4: apiKey.slice(-4),
+    },
+  };
+};
+
+export const bindTelegram = async () => {
+  return apiRequest<unknown>("/api/v1/twitterUsers/api-keys/bind-telegram", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+};
+
+export const callProtectedApi = async (path: string, apiKey: string): Promise<ProtectedApiResult> => {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const response = await fetch(`${getApiBaseUrl()}${normalizedPath}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "X-API-Key": apiKey,
+    },
+  });
+  const body = await readResponseBody(response);
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    body: typeof body === "string" ? body : JSON.stringify(body ?? null, null, 2),
+  };
 };
 
 export const getReadableAuthError = (error: unknown) => {
   if (error instanceof CreditHubApiError) {
     if (error.status === 401) {
-      return "X 登入尚未完成，請重新點擊 Sign in with X。";
+      return "X 登入尚未完成或 session 已失效，請重新點擊 Sign in with X。";
     }
 
     if (error.status === 403) {
-      return "目前登入狀態未通過後端驗證，請確認 X OAuth callback 與 session 設定。";
+      return "目前登入狀態未通過後端驗證，請確認 httpOnly cookie、CORS 與 session 設定。";
+    }
+
+    if (error.status === 404) {
+      return "目前帳號尚未建立 API key profile，可直接按 Create API Key。";
+    }
+
+    if (error.status === 409) {
+      return "你已經有 active API key，可改用 Rotate API Key。";
     }
 
     return error.message;
@@ -292,5 +548,3 @@ export const getReadableAuthError = (error: unknown) => {
 
   return "登入流程發生未知錯誤。";
 };
-
-export { toUserData };
