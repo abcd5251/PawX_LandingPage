@@ -1,35 +1,46 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import LoginScreen from "@/components/LoginScreen";
 import Dashboard from "@/components/Dashboard";
 import type { UserData } from "@/components/Dashboard";
+import { useLocation } from "react-router-dom";
+import { bootstrapCreditHubUser, getReadableAuthError, getXAuthorizationUrl } from "@/lib/creditHubAuth";
 
 const CreditHub = () => {
   const [user, setUser] = useState<UserData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRedirectingToX, setIsRedirectingToX] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const location = useLocation();
+  const isAuthCallback = location.pathname === "/credit-hub/auth/callback";
+
+  const refreshAuthenticatedUser = useCallback(async () => {
+    setIsLoading(true);
+    setAuthError("");
+
+    try {
+      const authenticatedUser = await bootstrapCreditHubUser();
+      setUser(authenticatedUser);
+
+      if (!authenticatedUser && isAuthCallback) {
+        setAuthError("X 登入完成後沒有讀到有效 session，請確認後端 callback 是否有成功寫入 httpOnly cookie。");
+      }
+    } catch (error) {
+      setUser(null);
+      setAuthError(getReadableAuthError(error));
+    } finally {
+      setIsLoading(false);
+      setIsRedirectingToX(false);
+    }
+  }, [isAuthCallback]);
+
+  useEffect(() => {
+    void refreshAuthenticatedUser();
+  }, [refreshAuthenticatedUser]);
 
   const handleTwitterLogin = () => {
-    setUser({
-      name: "CryptoWhale",
-      handle: "@cryptowhale_ai",
-      avatar: "https://api.dicebear.com/7.x/thumbs/svg?seed=cryptowhale",
-      twitterConnected: true,
-      telegramConnected: false,
-      telegramUsername: "",
-      referralCode: "",
-      baseCredits: 2500,
-      telegramBonus: 0,
-      referralBonus: 0,
-      creditsUsed: 0,
-      referralCount: 0,
-      dailyUsage: [
-        { date: "Mar 15", used: 120 },
-        { date: "Mar 16", used: 85 },
-        { date: "Mar 17", used: 200 },
-        { date: "Mar 18", used: 50 },
-        { date: "Mar 19", used: 175 },
-        { date: "Mar 20", used: 310 },
-        { date: "Mar 21", used: 60 },
-      ],
-    });
+    setAuthError("");
+    setIsRedirectingToX(true);
+    window.location.assign(getXAuthorizationUrl());
   };
 
   const handleTelegramLink = () => {
@@ -71,7 +82,14 @@ const CreditHub = () => {
   };
 
   if (!user) {
-    return <LoginScreen onLogin={handleTwitterLogin} />;
+    return (
+      <LoginScreen
+        onLogin={handleTwitterLogin}
+        isLoading={isLoading || isRedirectingToX}
+        loadingLabel={isAuthCallback ? "Finishing X sign in..." : "Connecting to X..."}
+        errorMessage={authError}
+      />
+    );
   }
 
   return (

@@ -4,6 +4,9 @@ import PawIcon from "@/components/PawIcon";
 
 interface LoginScreenProps {
   onLogin: () => void;
+  isLoading?: boolean;
+  errorMessage?: string;
+  loadingLabel?: string;
 }
 
 const pawDecorations = [
@@ -15,7 +18,7 @@ const pawDecorations = [
   { className: "bottom-[14%] right-[3%]", size: 66, rotate: 10, delay: 2.2 },
 ];
 
-const LoginScreen = ({ onLogin }: LoginScreenProps) => {
+const LoginScreen = ({ onLogin, isLoading = false, errorMessage, loadingLabel = "Connecting to X..." }: LoginScreenProps) => {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center relative overflow-hidden">
       {pawDecorations.map((paw) => (
@@ -73,17 +76,25 @@ const LoginScreen = ({ onLogin }: LoginScreenProps) => {
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.3, duration: 0.4 }}
         >
-          <Button size="lg" onClick={onLogin} className="gap-3 text-base px-10 rounded-xl bg-foreground text-card">
+          <Button
+            size="lg"
+            onClick={onLogin}
+            disabled={isLoading}
+            className="gap-3 text-base px-10 rounded-xl bg-foreground text-card disabled:opacity-80"
+          >
             <span className="inline-flex h-5 w-5 items-center justify-center rounded-[2px] bg-card text-foreground text-xs font-bold">
               X
             </span>
-            Sign in with X
+            {isLoading ? loadingLabel : "Sign in with X"}
           </Button>
         </motion.div>
 
-        <p className="text-muted-foreground text-xs">
-          Connect your X account to get started with 2,500 free credits
-        </p>
+        <div className="space-y-2 text-center">
+          <p className="text-muted-foreground text-xs">
+            Connect your X account to get started with 2,500 free credits
+          </p>
+          {errorMessage ? <p className="text-sm font-medium text-destructive max-w-md">{errorMessage}</p> : null}
+        </div>
       </motion.div>
     </div>
   );
