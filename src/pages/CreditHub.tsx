@@ -1,24 +1,60 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import LoginScreen from "@/components/LoginScreen";
 import Dashboard from "@/components/Dashboard";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   AUTH_REDIRECT_STORAGE_KEY,
   bindTelegram,
+  buildEmptyApiUsage,
   buildFallbackProfile,
   callProtectedApi,
   createApiKey,
   CreditHubApiError,
   fetchApiKeyProfile,
+  fetchApiUsage,
   fetchXSession,
+  getTelegramBotUsername,
   getReadableAuthError,
   getXAuthorizationUrl,
   logoutXSession,
   type ApiKeyProfile,
+  type ApiUsageSeries,
+  type TelegramAuthPayload,
+  type UsageRange,
   type XSessionUser,
 } from "@/lib/creditHubAuth";
 
 const DEFAULT_PROTECTED_PATH = "/api/v1/twitterUsers/info?userId=44196397";
+const TELEGRAM_WIDGET_CALLBACK_NAME = "__pawxTelegramAuth";
+
+interface TelegramWidgetUser {
+  id: number | string;
+  first_name: string;
+  last_name?: string;
+  username?: string;
+  photo_url?: string;
+  auth_date: number | string;
+  hash: string;
+}
+
+interface TelegramAuthWindow extends Window {
+  [TELEGRAM_WIDGET_CALLBACK_NAME]?: (user: TelegramWidgetUser) => void;
+}
+
+const toTelegramAuthPayload = (user: TelegramWidgetUser): TelegramAuthPayload => ({
+  id: String(user.id),
+  first_name: user.first_name,
+  last_name: user.last_name,
+  username: user.username,
+  photo_url: user.photo_url,
+  auth_date: String(user.auth_date),
+  hash: user.hash,
+});
+
+const isTelegramBoundProfile = (profile: ApiKeyProfile) =>
+  profile.telegramConnected || Boolean(profile.telegramUsername) || profile.telegramBonus > 0;
+
+const hasConcreteTwitterId = (twitterId: string) => Boolean(twitterId && twitterId !== "x-session");
 
 const toSessionUserFromProfile = (nextProfile: ApiKeyProfile): XSessionUser => ({
   twitterId: nextProfile.twitterId,
@@ -27,6 +63,18 @@ const toSessionUserFromProfile = (nextProfile: ApiKeyProfile): XSessionUser => (
   avatar: nextProfile.avatar,
   profileUrl: nextProfile.profileUrl,
 });
+
+const getReadableUsageError = (error: unknown, range: UsageRange) => {
+  if (error instanceof CreditHubApiError) {
+    if (error.message.toLowerCase().includes("generate_series")) {
+      return range === "30d"
+        ? "最近 30 天用量資料暫時無法讀取，已改為顯示最近 7 天。"
+        : "每日用量資料暫時無法讀取，請稍後再試。";
+    }
+  }
+
+  return getReadableAuthError(error);
+};
 
 const CreditHub = () => {
   const [sessionUser, setSessionUser] = useState<XSessionUser | null>(null);
@@ -45,9 +93,16 @@ const CreditHub = () => {
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [protectedPath, setProtectedPath] = useState(DEFAULT_PROTECTED_PATH);
   const [protectedResponse, setProtectedResponse] = useState("");
+  const [usageRange, setUsageRange] = useState<UsageRange>("7d");
+  const [usage, setUsage] = useState<ApiUsageSeries>(buildEmptyApiUsage("7d"));
+  const [usageError, setUsageError] = useState("");
+  const [isUsageLoading, setIsUsageLoading] = useState(false);
+  const [isTelegramWidgetReady, setIsTelegramWidgetReady] = useState(false);
+  const telegramWidgetContainerRef = useRef<HTMLDivElement | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const isAuthCallback = location.pathname === "/credit-hub/auth/callback";
+  const telegramBotUsername = getTelegramBotUsername();
 
   const loadProfileForUser = useCallback(async (user: XSessionUser) => {
     setIsProfileLoading(true);
@@ -68,6 +123,22 @@ const CreditHub = () => {
       throw error;
     } finally {
       setIsProfileLoading(false);
+    }
+  }, []);
+
+  const loadUsage = useCallback(async (range: UsageRange) => {
+    setIsUsageLoading(true);
+    setUsageError("");
+
+    try {
+      const nextUsage = await fetchApiUsage(range);
+      setUsage(nextUsage);
+      return nextUsage;
+    } catch (error) {
+      setUsageError(getReadableUsageError(error, range));
+      throw error;
+    } finally {
+      setIsUsageLoading(false);
     }
   }, []);
 
@@ -132,6 +203,21 @@ const CreditHub = () => {
     void bootstrapSession();
   }, [isAuthCallback, loadProfileForUser, navigate]);
 
+  useEffect(() => {
+    if (!sessionUser) {
+      setUsage(buildEmptyApiUsage(usageRange));
+      setUsageError("");
+      return;
+    }
+
+    void loadUsage(usageRange).catch(() => {
+      if (usageRange === "30d") {
+        setStatusMessage("最近 30 天用量資料暫時無法讀取，已改為顯示最近 7 天。");
+        setUsageRange("7d");
+      }
+    });
+  }, [loadUsage, sessionUser, usageRange]);
+
   const refreshProfile = useCallback(async () => {
     if (!sessionUser) {
       return;
@@ -140,7 +226,12 @@ const CreditHub = () => {
     setAuthError("");
     const nextProfile = await loadProfileForUser(sessionUser);
     setProfile(nextProfile);
-  }, [loadProfileForUser, sessionUser]);
+    try {
+      await loadUsage(usageRange);
+    } catch {
+      void 0;
+    }
+  }, [loadProfileForUser, loadUsage, sessionUser, usageRange]);
 
   const handleTwitterLogin = () => {
     setAuthError("");
@@ -187,29 +278,140 @@ const CreditHub = () => {
     [loadProfileForUser, sessionUser],
   );
 
-  const handleBindTelegram = useCallback(async () => {
+  const handleBindTelegramAuth = useCallback(
+    async (user: TelegramWidgetUser) => {
+      if (!sessionUser) {
+        return;
+      }
+
+      if (!hasConcreteTwitterId(sessionUser.twitterId)) {
+        setAuthError("目前尚未讀到有效的 Twitter ID，請重新登入後再綁定 Telegram。");
+        setStatusMessage("");
+        return;
+      }
+
+      const previousProfile = profile;
+
+      setAuthError("");
+      setStatusMessage("");
+      setIsBindingTelegram(true);
+
+      try {
+        await bindTelegram({
+          twitterId: sessionUser.twitterId,
+          telegramAuth: toTelegramAuthPayload(user),
+        });
+
+        const nextProfile = await loadProfileForUser(sessionUser);
+        setStatusMessage(
+          nextProfile.telegramConnected
+            ? `Telegram 綁定成功，credits 與綁定狀態已刷新，目前可用 ${nextProfile.remainingCredits.toLocaleString()} / ${nextProfile.totalCredits.toLocaleString()} credits。`
+            : "Telegram 綁定完成，已刷新帳號狀態。",
+        );
+      } catch (error) {
+        try {
+          const refreshedProfile = await loadProfileForUser(sessionUser);
+          const previousCredits = previousProfile?.totalCredits ?? 0;
+          const creditsIncreased = refreshedProfile.totalCredits > previousCredits;
+
+          if (isTelegramBoundProfile(refreshedProfile) || creditsIncreased) {
+            setAuthError("");
+            setStatusMessage(
+              `Telegram 綁定成功，credits 與綁定狀態已刷新，目前可用 ${refreshedProfile.remainingCredits.toLocaleString()} / ${refreshedProfile.totalCredits.toLocaleString()} credits。`,
+            );
+            return;
+          }
+        } catch {
+          void 0;
+        }
+
+        if (error instanceof CreditHubApiError && error.status === 403) {
+          setAuthError(`Telegram 已完成授權，但後端沒有接受這次綁定結果。請確認 bind-telegram 是否使用 twitterId=${sessionUser.twitterId} 寫入正確的 DB 帳號。`);
+          return;
+        }
+
+        setAuthError(getReadableAuthError(error));
+      } finally {
+        setIsBindingTelegram(false);
+      }
+    },
+    [loadProfileForUser, profile, sessionUser],
+  );
+
+  useEffect(() => {
+    const widgetContainer = telegramWidgetContainerRef.current;
+
+    setIsTelegramWidgetReady(false);
+
+    if (!widgetContainer) {
+      return;
+    }
+
+    if (!sessionUser || !telegramBotUsername || profile?.telegramConnected) {
+      widgetContainer.innerHTML = "";
+      return;
+    }
+
+    const telegramWindow = window as TelegramAuthWindow;
+    const observer = new MutationObserver(() => {
+      setIsTelegramWidgetReady(Boolean(widgetContainer.querySelector("iframe, button, a, [role='button']")));
+    });
+
+    telegramWindow[TELEGRAM_WIDGET_CALLBACK_NAME] = (user: TelegramWidgetUser) => {
+      void handleBindTelegramAuth(user);
+    };
+
+    widgetContainer.innerHTML = "";
+    observer.observe(widgetContainer, { childList: true, subtree: true });
+
+    const script = document.createElement("script");
+    script.src = "https://telegram.org/js/telegram-widget.js?22";
+    script.async = true;
+    script.onload = () => {
+      window.setTimeout(() => {
+        setIsTelegramWidgetReady(Boolean(widgetContainer.querySelector("iframe, button, a, [role='button']")));
+      }, 150);
+    };
+    script.setAttribute("data-telegram-login", telegramBotUsername);
+    script.setAttribute("data-size", "large");
+    script.setAttribute("data-userpic", "true");
+    script.setAttribute("data-onauth", `${TELEGRAM_WIDGET_CALLBACK_NAME}(user)`);
+    widgetContainer.appendChild(script);
+
+    return () => {
+      observer.disconnect();
+      setIsTelegramWidgetReady(false);
+      widgetContainer.innerHTML = "";
+      delete telegramWindow[TELEGRAM_WIDGET_CALLBACK_NAME];
+    };
+  }, [handleBindTelegramAuth, profile?.telegramConnected, sessionUser, telegramBotUsername]);
+
+  const handleBindTelegram = useCallback(() => {
     if (!sessionUser) {
       return;
     }
 
     setAuthError("");
-    setStatusMessage("");
-    setIsBindingTelegram(true);
-
-    try {
-      await bindTelegram();
-      const nextProfile = await loadProfileForUser(sessionUser);
-      setStatusMessage(
-        nextProfile.telegramConnected
-          ? "Telegram 綁定狀態已更新。"
-          : "Bind Telegram 請求已送出，若後端還有下一步驗證流程請繼續完成。",
-      );
-    } catch (error) {
-      setAuthError(getReadableAuthError(error));
-    } finally {
-      setIsBindingTelegram(false);
+    if (!telegramBotUsername) {
+      setStatusMessage("");
+      setAuthError("缺少 Telegram bot username 設定，請確認 VITE_TELEGRAM_BOT_USERNAME。");
+      return;
     }
-  }, [loadProfileForUser, sessionUser]);
+
+    if (!hasConcreteTwitterId(sessionUser.twitterId)) {
+      setStatusMessage("");
+      setAuthError("目前尚未讀到有效的 Twitter ID，請重新登入後再綁定 Telegram。");
+      return;
+    }
+
+    if (!isTelegramWidgetReady) {
+      setStatusMessage("");
+      setAuthError("Telegram 授權元件仍在準備中，請稍候再試一次。");
+      return;
+    }
+
+    setStatusMessage("請在 Telegram 授權視窗完成確認，成功後會自動綁定帳號並刷新 credits。");
+  }, [isTelegramWidgetReady, sessionUser, telegramBotUsername]);
 
   const handleCallProtectedApi = useCallback(async () => {
     if (!apiKeyInput.trim()) {
@@ -224,6 +426,13 @@ const CreditHub = () => {
     try {
       const result = await callProtectedApi(protectedPath, apiKeyInput.trim());
       setProtectedResponse(`${result.ok ? "OK" : "ERROR"} ${result.status}\n${result.body}`);
+      if (result.ok) {
+        try {
+          await loadUsage(usageRange);
+        } catch {
+          void 0;
+        }
+      }
       setStatusMessage(
         result.ok ? "受保護 API 呼叫完成。" : "受保護 API 回傳非 2xx，請檢查 key 權限、endpoint 或後端回應內容。",
       );
@@ -233,7 +442,7 @@ const CreditHub = () => {
     } finally {
       setIsCallingProtectedApi(false);
     }
-  }, [apiKeyInput, protectedPath]);
+  }, [apiKeyInput, loadUsage, protectedPath, usageRange]);
 
   const handleLogout = useCallback(async () => {
     setIsLoggingOut(true);
@@ -248,6 +457,9 @@ const CreditHub = () => {
       setApiKeyInput("");
       setProtectedResponse("");
       setProtectedPath(DEFAULT_PROTECTED_PATH);
+      setUsageRange("7d");
+      setUsage(buildEmptyApiUsage("7d"));
+      setUsageError("");
     } catch (error) {
       setAuthError(getReadableAuthError(error));
     } finally {
@@ -276,15 +488,29 @@ const CreditHub = () => {
       protectedResponse={protectedResponse}
       statusMessage={statusMessage}
       errorMessage={authError}
+      usage={usage}
+      usageRange={usageRange}
+      usageError={usageError}
       isProfileLoading={isProfileLoading}
       isCreatingApiKey={isCreatingApiKey}
       isRotatingApiKey={isRotatingApiKey}
       isBindingTelegram={isBindingTelegram}
       isCallingProtectedApi={isCallingProtectedApi}
       isLoggingOut={isLoggingOut}
+      isUsageLoading={isUsageLoading}
+      isTelegramWidgetReady={isTelegramWidgetReady}
+      telegramWidgetContent={
+        !profile?.telegramConnected ? (
+          <div
+            ref={telegramWidgetContainerRef}
+            className="absolute inset-0 z-20 overflow-hidden opacity-0 [&_iframe]:!h-full [&_iframe]:!w-full [&_iframe]:!max-w-none"
+          />
+        ) : null
+      }
       onRefreshProfile={() => {
         void refreshProfile();
       }}
+      onUsageRangeChange={setUsageRange}
       onApiKeyInputChange={setApiKeyInput}
       onProtectedPathChange={setProtectedPath}
       onCreateApiKey={() => {

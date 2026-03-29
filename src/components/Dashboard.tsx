@@ -1,11 +1,12 @@
 import { motion } from "framer-motion";
-import { Check, Copy, KeyRound, LogOut, RefreshCw, Send, ShieldCheck, Zap } from "lucide-react";
-import { useMemo, useState } from "react";
+import { BarChart3, Check, Copy, KeyRound, Link2, LogOut, RefreshCw, Send, ShieldCheck, Users, Zap } from "lucide-react";
+import { type ReactNode, useMemo, useState } from "react";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import PawIcon from "@/components/PawIcon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import type { ApiKeyProfile, XSessionUser } from "@/lib/creditHubAuth";
+import type { ApiKeyProfile, ApiUsageSeries, UsageRange, XSessionUser } from "@/lib/creditHubAuth";
 
 interface DashboardProps {
   sessionUser: XSessionUser;
@@ -16,13 +17,20 @@ interface DashboardProps {
   protectedResponse: string;
   statusMessage: string;
   errorMessage: string;
+  usage: ApiUsageSeries;
+  usageRange: UsageRange;
+  usageError: string;
   isProfileLoading: boolean;
   isCreatingApiKey: boolean;
   isRotatingApiKey: boolean;
   isBindingTelegram: boolean;
   isCallingProtectedApi: boolean;
   isLoggingOut: boolean;
+  isUsageLoading: boolean;
+  isTelegramWidgetReady: boolean;
+  telegramWidgetContent: ReactNode;
   onRefreshProfile: () => void;
+  onUsageRangeChange: (value: UsageRange) => void;
   onApiKeyInputChange: (value: string) => void;
   onProtectedPathChange: (value: string) => void;
   onCreateApiKey: () => void;
@@ -48,13 +56,20 @@ const Dashboard = ({
   protectedResponse,
   statusMessage,
   errorMessage,
+  usage,
+  usageRange,
+  usageError,
   isProfileLoading,
   isCreatingApiKey,
   isRotatingApiKey,
   isBindingTelegram,
   isCallingProtectedApi,
   isLoggingOut,
+  isUsageLoading,
+  isTelegramWidgetReady,
+  telegramWidgetContent,
   onRefreshProfile,
+  onUsageRangeChange,
   onApiKeyInputChange,
   onProtectedPathChange,
   onCreateApiKey,
@@ -63,7 +78,9 @@ const Dashboard = ({
   onCallProtectedApi,
   onLogout,
 }: DashboardProps) => {
-  const [copiedValue, setCopiedValue] = useState<"" | "key" | "handle" | "twitterId" | "avatar" | "profileUrl">("");
+  const [copiedValue, setCopiedValue] = useState<
+    "" | "key" | "handle" | "twitterId" | "avatar" | "profileUrl" | "referralCode" | "referralLink"
+  >("");
 
   const activeProfile = profile ?? {
     ...sessionUser,
@@ -91,7 +108,27 @@ const Dashboard = ({
     return Math.min((activeProfile.creditsUsed / activeProfile.totalCredits) * 100, 100);
   }, [activeProfile.creditsUsed, activeProfile.totalCredits]);
 
-  const copyText = async (value: string, type: "key" | "handle" | "twitterId" | "avatar" | "profileUrl") => {
+  const referralLink = useMemo(() => {
+    if (!activeProfile.referralCode) {
+      return "";
+    }
+
+    const origin = typeof window === "undefined" ? "" : window.location.origin;
+    return `${origin}/?ref=${encodeURIComponent(activeProfile.referralCode)}`;
+  }, [activeProfile.referralCode]);
+
+  const averageDailyUsage = useMemo(() => {
+    if (!usage.days.length) {
+      return 0;
+    }
+
+    return usage.totalCreditsUsed / usage.days.length;
+  }, [usage.days.length, usage.totalCreditsUsed]);
+
+  const copyText = async (
+    value: string,
+    type: "key" | "handle" | "twitterId" | "avatar" | "profileUrl" | "referralCode" | "referralLink",
+  ) => {
     if (!value) {
       return;
     }
@@ -252,7 +289,7 @@ const Dashboard = ({
           ) : null}
         </motion.section>
 
-        <div className="grid gap-8 lg:grid-cols-2">
+        <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
           <motion.section
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -316,56 +353,217 @@ const Dashboard = ({
             </div>
           </motion.section>
 
-          <motion.section
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="rounded-2xl border bg-card p-6 shadow-card"
-          >
-            <div className="mb-4 flex items-center gap-3">
-              <Send className="h-5 w-5 text-[hsl(200,80%,50%)]" />
-              <h2 className="text-lg font-bold">Bind Telegram</h2>
-            </div>
-
-            <div className="space-y-4">
-              <div className="rounded-xl bg-muted/50 p-4">
-                <p className="text-sm font-medium">
-                  {activeProfile.telegramConnected
-                    ? `已綁定 ${activeProfile.telegramUsername || "Telegram account"}`
-                    : "尚未綁定 Telegram"}
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  綁定後可從後端更新 credits、推薦碼與 Telegram 狀態。
-                </p>
+          <div className="grid gap-8">
+            <motion.section
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+              className="rounded-2xl border bg-card p-6 shadow-card"
+            >
+              <div className="mb-4 flex items-center gap-3">
+                <Send className="h-5 w-5 text-[hsl(200,80%,50%)]" />
+                <h2 className="text-lg font-bold">Link Telegram</h2>
               </div>
 
-              <Button
-                className="w-full bg-[hsl(200,80%,50%)] text-white hover:bg-[hsl(200,80%,45%)]"
-                onClick={onBindTelegram}
-                disabled={isBindingTelegram}
-              >
-                <Send className="h-4 w-4" />
-                {isBindingTelegram ? "Binding Telegram..." : activeProfile.telegramConnected ? "Re-bind Telegram" : "Bind Telegram"}
-              </Button>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-4">
                 <div className="rounded-xl bg-muted/50 p-4">
-                  <p className="text-xs text-muted-foreground">Telegram Username</p>
-                  <p className="mt-1 font-semibold">{activeProfile.telegramUsername || "Not linked"}</p>
+                  <p className="text-sm text-muted-foreground">
+                    Connect your Telegram account to unlock your referral code and earn
+                    <span className="ml-1 font-semibold text-[hsl(28,94%,53%)]">+1,500 bonus credits</span>
+                  </p>
                 </div>
-                <div className="rounded-xl bg-muted/50 p-4">
-                  <p className="text-xs text-muted-foreground">Referral Code</p>
-                  <p className="mt-1 font-semibold">{activeProfile.referralCode || "Waiting for backend"}</p>
+
+                <div className="relative">
+                  <Button
+                    className="w-full bg-[hsl(200,80%,50%)] text-white hover:bg-[hsl(200,80%,45%)]"
+                    onClick={onBindTelegram}
+                    disabled={isBindingTelegram || activeProfile.telegramConnected}
+                  >
+                    <Send className="h-4 w-4" />
+                    {activeProfile.telegramConnected
+                      ? `Connected${activeProfile.telegramUsername ? ` · ${activeProfile.telegramUsername}` : ""}`
+                      : isBindingTelegram
+                        ? "Connecting Telegram..."
+                        : !isTelegramWidgetReady
+                          ? "Preparing Telegram..."
+                          : "Connect Telegram"}
+                  </Button>
+                  {!activeProfile.telegramConnected ? telegramWidgetContent : null}
+                </div>
+
+                {activeProfile.telegramConnected ? (
+                  <div className="rounded-xl border border-[hsl(200,80%,50%)]/20 bg-[hsl(200,80%,50%)]/5 p-4">
+                    <p className="text-sm font-medium text-foreground">Telegram linked successfully</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {activeProfile.telegramUsername
+                        ? `Connected as ${activeProfile.telegramUsername}`
+                        : "Your Telegram account is connected and ready for referral credits."}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-[hsl(200,80%,50%)]/30 bg-[hsl(200,80%,50%)]/5 p-4">
+                    <p className="text-sm text-muted-foreground">
+                      {isTelegramWidgetReady
+                        ? "點擊 Connect Telegram 後會直接開啟 Telegram 授權視窗，完成確認後會自動顯示綁定結果。"
+                        : "正在準備 Telegram 授權元件，完成後即可直接開啟 OAuth 視窗。"}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </motion.section>
+
+            <motion.section
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.25 }}
+              className="rounded-2xl border bg-card p-6 shadow-card"
+            >
+              <div className="mb-4 flex items-center gap-3">
+                <Users className="h-5 w-5 text-[hsl(28,94%,53%)]" />
+                <h2 className="text-lg font-bold">Referral Stats</h2>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl bg-muted/50 p-4 text-center">
+                  <p className="text-3xl font-extrabold">{activeProfile.referralCount.toLocaleString()}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">People Referred</p>
+                </div>
+                <div className="rounded-xl bg-muted/50 p-4 text-center">
+                  <p className="text-3xl font-extrabold text-[hsl(28,94%,53%)]">+{activeProfile.referralBonus.toLocaleString()}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Credits Earned</p>
                 </div>
               </div>
-            </div>
-          </motion.section>
+
+              <div className="mt-4 space-y-3 rounded-xl bg-muted/40 p-4">
+                <div className="flex items-center gap-2">
+                  <Link2 className="h-4 w-4 text-primary" />
+                  <p className="text-sm font-medium">Referral Link</p>
+                </div>
+
+                {referralLink ? (
+                  <>
+                    <p className="break-all text-sm text-muted-foreground">{referralLink}</p>
+                    <div className="flex flex-wrap gap-3">
+                      <Button variant="outline" size="sm" onClick={() => copyText(referralLink, "referralLink")}>
+                        {copiedValue === "referralLink" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                        {copiedValue === "referralLink" ? "Copied link" : "Copy Referral Link"}
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => copyText(activeProfile.referralCode, "referralCode")}>
+                        {copiedValue === "referralCode" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                        {copiedValue === "referralCode" ? "Copied code" : `Code: ${activeProfile.referralCode}`}
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <p className="rounded-xl bg-background px-4 py-3 text-sm text-muted-foreground">
+                    {activeProfile.telegramConnected ? "Waiting for backend to return your referral code" : "Link Telegram first to start earning referral credits"}
+                  </p>
+                )}
+              </div>
+            </motion.section>
+          </div>
         </div>
 
         <motion.section
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
+          className="rounded-2xl border bg-card p-6 shadow-card"
+        >
+          <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-3">
+              <BarChart3 className="h-5 w-5 text-primary" />
+              <div>
+                <h2 className="text-lg font-bold">Daily Usage ({usageRange === "7d" ? "Last 7 Days" : "Last 30 Days"})</h2>
+                <p className="text-sm text-muted-foreground">Track your daily credits used and request count for this account.</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 rounded-xl bg-muted/50 p-1">
+              {(["7d", "30d"] as UsageRange[]).map((range) => (
+                <Button
+                  key={range}
+                  variant={usageRange === range ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => onUsageRangeChange(range)}
+                  disabled={isUsageLoading}
+                >
+                  {range === "7d" ? "Last 7 days" : "Last 30 days"}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl bg-muted/50 p-4">
+              <p className="text-xs text-muted-foreground">Credits Used</p>
+              <p className="mt-1 text-2xl font-extrabold">{usage.totalCreditsUsed.toLocaleString()}</p>
+            </div>
+            <div className="rounded-xl bg-muted/50 p-4">
+              <p className="text-xs text-muted-foreground">API Requests</p>
+              <p className="mt-1 text-2xl font-extrabold">{usage.totalRequestCount.toLocaleString()}</p>
+            </div>
+            <div className="rounded-xl bg-muted/50 p-4">
+              <p className="text-xs text-muted-foreground">Current Balance</p>
+              <p className="mt-1 text-2xl font-extrabold">{usage.currentBalance.toLocaleString()}</p>
+            </div>
+          </div>
+
+          {usageError ? (
+            <p className="mb-4 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-700">{usageError}</p>
+          ) : null}
+
+          <div className="rounded-2xl border bg-background/80 p-4">
+            <div className="h-[280px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={usage.days}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(30 25% 88%)" />
+                  <XAxis dataKey="label" tick={{ fontSize: 12, fill: "hsl(20 10% 45%)" }} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "hsl(20 10% 45%)" }} />
+                  <Tooltip
+                    contentStyle={{
+                      background: "hsl(30 50% 98%)",
+                      border: "1px solid hsl(30 25% 88%)",
+                      borderRadius: "12px",
+                      fontSize: "13px",
+                    }}
+                    formatter={(value: number, name: string) => [
+                      Number(value).toLocaleString(),
+                      name === "creditsUsed" ? "Credits Used" : "API Requests",
+                    ]}
+                    labelFormatter={(label: string, payload) =>
+                      payload?.[0]?.payload?.date ? `${label} · ${payload[0].payload.date}` : label
+                    }
+                  />
+                  <Bar dataKey="creditsUsed" fill="hsl(28 90% 55%)" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+            <p>
+              {isUsageLoading
+                ? "Loading usage..."
+                : `Showing ${usage.days.length.toLocaleString()} daily points for ${usage.range} · ${usage.apiKeyType || "session"} · avg ${averageDailyUsage.toFixed(1)}/day.`}
+            </p>
+            {!usageError ? <p>Tooltip includes daily request count for each bar.</p> : null}
+          </div>
+
+          {!usageError && (usage.twitterId || usage.telegramId || usage.accountStatus) ? (
+            <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
+              {usage.accountStatus ? <span className="rounded-full border px-3 py-1">Status {usage.accountStatus}</span> : null}
+              {usage.apiKeyType ? <span className="rounded-full border px-3 py-1">API Key {usage.apiKeyType}</span> : null}
+              {usage.twitterId ? <span className="rounded-full border px-3 py-1">Twitter ID {usage.twitterId}</span> : null}
+              {usage.telegramId ? <span className="rounded-full border px-3 py-1">Telegram ID {usage.telegramId}</span> : null}
+            </div>
+          ) : null}
+        </motion.section>
+
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.35 }}
           className="rounded-2xl border bg-card p-6 shadow-card"
         >
           <div className="mb-4 flex items-center gap-3">

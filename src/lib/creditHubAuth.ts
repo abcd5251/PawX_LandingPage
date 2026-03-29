@@ -1,3 +1,5 @@
+import { eachDayOfInterval, format, parseISO, subDays } from "date-fns";
+
 export interface XSessionUser {
   twitterId: string;
   name: string;
@@ -37,6 +39,44 @@ export interface ProtectedApiResult {
   ok: boolean;
   status: number;
   body: string;
+}
+
+export interface TelegramAuthPayload {
+  id: string;
+  first_name: string;
+  last_name?: string;
+  username?: string;
+  photo_url?: string;
+  auth_date: string;
+  hash: string;
+}
+
+export interface BindTelegramRequest {
+  twitterId: string;
+  telegramAuth: TelegramAuthPayload;
+  referralCode?: string;
+}
+
+export type UsageRange = "7d" | "30d";
+
+export interface ApiUsageDay {
+  date: string;
+  label: string;
+  creditsUsed: number;
+  requestCount: number;
+}
+
+export interface ApiUsageSeries {
+  range: UsageRange;
+  rangeDays: number;
+  totalCreditsUsed: number;
+  totalRequestCount: number;
+  apiKeyType: string;
+  twitterId: string;
+  telegramId: string;
+  accountStatus: string;
+  currentBalance: number;
+  days: ApiUsageDay[];
 }
 
 export const AUTH_REDIRECT_STORAGE_KEY = "pawx-credit-hub-auth-redirect";
@@ -99,6 +139,17 @@ const pickFirst = (source: unknown, paths: string[][]) => {
   return undefined;
 };
 
+const readArray = (source: unknown, paths: string[][]) => {
+  for (const path of paths) {
+    const value = readPath(source, path);
+    if (Array.isArray(value)) {
+      return value;
+    }
+  }
+
+  return [];
+};
+
 const readString = (source: unknown, paths: string[][], fallback = "") => {
   const value = pickFirst(source, paths);
   if (typeof value === "string") {
@@ -136,6 +187,7 @@ const readBoolean = (source: unknown, paths: string[][], fallback = false) => {
 };
 
 const trimTrailingSlash = (value: string) => value.replace(/\/+$/, "");
+const trimEnvValue = (value?: string) => value?.trim() || "";
 
 const normalizeHandle = (value: string, twitterId: string) => {
   if (!value) {
@@ -251,11 +303,135 @@ const readApiKeyLast4 = (payload: unknown, apiKeyPreview: string, fullApiKey = "
 };
 
 export const getApiBaseUrl = () => {
-  const configured = import.meta.env.VITE_PAWX_API_BASE_URL || import.meta.env.VITE_API_BASE_URL;
+  const configured = trimEnvValue(import.meta.env.VITE_PAWX_API_BASE_URL) || trimEnvValue(import.meta.env.VITE_API_BASE_URL);
   return trimTrailingSlash(configured || DEFAULT_API_BASE_URL);
 };
 
+export const getTelegramBotUsername = () => trimEnvValue(import.meta.env.VITE_TELEGRAM_BOT_USERNAME);
+
 export const getXAuthorizationUrl = () => `${getApiBaseUrl()}/api/v1/auth/x/start`;
+
+export const normalizeUsageRange = (value?: string): UsageRange => {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "30" || normalized === "30d" ? "30d" : "7d";
+};
+
+const getUsageRangeDays = (range: UsageRange) => (range === "30d" ? 30 : 7);
+
+const normalizeUsageDate = (value: unknown) => {
+  if (typeof value !== "string" || !value.trim()) {
+    return "";
+  }
+
+  const parsed = parseISO(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+
+  return format(parsed, "yyyy-MM-dd");
+};
+
+export const buildEmptyApiUsage = (range: UsageRange): ApiUsageSeries => {
+  const totalDays = getUsageRangeDays(range);
+  const interval = eachDayOfInterval({
+    start: subDays(new Date(), totalDays - 1),
+    end: new Date(),
+  });
+
+  return {
+    range,
+    rangeDays: totalDays,
+    totalCreditsUsed: 0,
+    totalRequestCount: 0,
+    apiKeyType: "",
+    twitterId: "",
+    telegramId: "",
+    accountStatus: "",
+    currentBalance: 0,
+    days: interval.map((day) => ({
+      date: format(day, "yyyy-MM-dd"),
+      label: format(day, "MMM d"),
+      creditsUsed: 0,
+      requestCount: 0,
+    })),
+  };
+};
+
+export const toApiUsageSeries = (payload: unknown, rawRange?: string): ApiUsageSeries => {
+  const range = normalizeUsageRange(
+    rawRange ||
+      readString(payload, [["range"], ["selectedRange"], ["data", "range"], ["meta", "range"]]),
+  );
+  const normalized = buildEmptyApiUsage(range);
+  const usageByDate = new Map(
+    normalized.days.map((day) => [
+      day.date,
+      {
+        ...day,
+      },
+    ]),
+  );
+
+  for (const entry of readArray(payload, [["dailyUsage"], ["days"], ["usage"], ["data", "dailyUsage"], ["data", "days"], ["data", "usage"], ["items"], ["results"]])) {
+    const date = normalizeUsageDate(
+      pickFirst(entry, [["date"], ["day"], ["bucketDate"], ["bucket_date"], ["usageDate"], ["usage_date"]]),
+    );
+
+    if (!date || !usageByDate.has(date)) {
+      continue;
+    }
+
+    usageByDate.set(date, {
+      date,
+      label: format(parseISO(date), "MMM d"),
+      creditsUsed: readNumber(
+        entry,
+        [
+          ["consumedCredits"],
+          ["creditsUsed"],
+          ["dailyConsumedCredits"],
+          ["dailyCreditsUsed"],
+          ["summary", "creditsUsed"],
+          ["totalCreditsUsed"],
+          ["usage"],
+          ["credits"],
+          ["total_usage"],
+        ],
+        0,
+      ),
+      requestCount: readNumber(
+        entry,
+        [["requestCount"], ["requests", "count"], ["count"], ["totalRequests"], ["summary", "requestCount"], ["requests"]],
+        0,
+      ),
+    });
+  }
+
+  const days = normalized.days.map((day) => usageByDate.get(day.date) ?? day);
+  const totalCreditsUsed = readNumber(
+    payload,
+    [["totalConsumedCredits"], ["totalCreditsUsed"], ["summary", "totalConsumedCredits"], ["summary", "totalCreditsUsed"]],
+    days.reduce((sum, day) => sum + day.creditsUsed, 0),
+  );
+  const totalRequestCount = readNumber(
+    payload,
+    [["totalRequests"], ["totalRequestCount"], ["summary", "totalRequests"], ["summary", "totalRequestCount"]],
+    days.reduce((sum, day) => sum + day.requestCount, 0),
+  );
+
+  return {
+    range,
+    rangeDays: readNumber(payload, [["rangeDays"], ["meta", "rangeDays"]], getUsageRangeDays(range)),
+    totalCreditsUsed,
+    totalRequestCount,
+    apiKeyType: readString(payload, [["apiKeyType"], ["meta", "apiKeyType"]]),
+    twitterId: readString(payload, [["twitterId"], ["meta", "twitterId"]]),
+    telegramId: readString(payload, [["telegramId"], ["meta", "telegramId"]]),
+    accountStatus: readString(payload, [["accountStatus"], ["status"], ["meta", "accountStatus"]]),
+    currentBalance: readNumber(payload, [["currentBalance"], ["balance"], ["credits", "remaining"], ["meta", "currentBalance"]], 0),
+    days,
+  };
+};
 
 export const toXSessionUser = (payload: unknown) => {
   const twitterId = readString(
@@ -392,7 +568,15 @@ export const toApiKeyProfile = (sessionUser: XSessionUser, payload: unknown): Ap
   );
   const telegramBonus = readNumber(
     payload,
-    [["telegramBonus"], ["credits", "telegramBonus"], ["credits", "telegram"], ["account", "telegramBonus"], ["user", "telegramBonus"]],
+    [
+      ["telegramBonus"],
+      ["credits", "telegramBonus"],
+      ["credits", "telegram"],
+      ["account", "telegramBonus"],
+      ["account", "telegramCredits"],
+      ["user", "telegramBonus"],
+      ["bonus", "telegram"],
+    ],
     0,
   );
   const referralBonus = readNumber(
@@ -405,16 +589,41 @@ export const toApiKeyProfile = (sessionUser: XSessionUser, payload: unknown): Ap
     [["creditsUsed"], ["credits", "used"], ["usage", "used"], ["account", "creditsUsed"], ["user", "creditsUsed"]],
     0,
   );
-  const totalCredits = readNumber(
-    payload,
-    [["totalCredits"], ["credits", "total"], ["credits"], ["account", "totalCredits"], ["account", "credits"], ["user", "totalCredits"]],
-    baseCredits + telegramBonus + referralBonus,
-  );
-  const remainingCredits = readNumber(
-    payload,
-    [["remainingCredits"], ["credits", "remaining"], ["credits", "available"], ["credits"], ["account", "remainingCredits"], ["account", "credits"], ["user", "remainingCredits"]],
-    totalCredits > 0 ? Math.max(totalCredits - creditsUsed, 0) : Math.max(baseCredits + telegramBonus + referralBonus - creditsUsed, 0),
-  );
+  const combinedCredits = baseCredits + telegramBonus + referralBonus;
+  const totalCreditsCandidate = pickFirst(payload, [
+    ["totalCredits"],
+    ["credits", "total"],
+    ["account", "totalCredits"],
+    ["user", "totalCredits"],
+    ["credits"],
+    ["account", "credits"],
+  ]);
+  const resolvedTotalCredits =
+    typeof totalCreditsCandidate === "number"
+      ? totalCreditsCandidate
+      : typeof totalCreditsCandidate === "string" && totalCreditsCandidate.trim()
+        ? Number(totalCreditsCandidate)
+        : Number.NaN;
+  const totalCredits =
+    Number.isFinite(resolvedTotalCredits) && resolvedTotalCredits > combinedCredits
+      ? resolvedTotalCredits
+      : Math.max(combinedCredits, Number.isFinite(resolvedTotalCredits) ? resolvedTotalCredits : 0);
+  const remainingCreditsCandidate = pickFirst(payload, [
+    ["remainingCredits"],
+    ["credits", "remaining"],
+    ["credits", "available"],
+    ["account", "remainingCredits"],
+    ["user", "remainingCredits"],
+  ]);
+  const resolvedRemainingCredits =
+    typeof remainingCreditsCandidate === "number"
+      ? remainingCreditsCandidate
+      : typeof remainingCreditsCandidate === "string" && remainingCreditsCandidate.trim()
+        ? Number(remainingCreditsCandidate)
+        : Number.NaN;
+  const remainingCredits = Number.isFinite(resolvedRemainingCredits)
+    ? resolvedRemainingCredits
+    : Math.max(totalCredits - creditsUsed, 0);
   const apiKeyPreview = readString(payload, [["apiKeyPreview"], ["apiKey", "preview"], ["keyPreview"], ["data", "apiKeyPreview"]]);
   const apiKeyLast4 = readApiKeyLast4(payload, apiKeyPreview);
   const hasActiveApiKey = readBoolean(
@@ -422,7 +631,17 @@ export const toApiKeyProfile = (sessionUser: XSessionUser, payload: unknown): Ap
     [["hasActiveApiKey"], ["apiKey", "hasActive"], ["apiKey", "active"], ["data", "hasActiveApiKey"]],
     Boolean(apiKeyPreview || apiKeyLast4),
   );
-  const telegramUsername = readString(payload, [["telegramUsername"], ["user", "telegramUsername"], ["telegram", "username"]]);
+  const telegramUsername = readString(payload, [
+    ["telegramUsername"],
+    ["telegramUserName"],
+    ["telegramHandle"],
+    ["user", "telegramUsername"],
+    ["user", "telegramUserName"],
+    ["user", "telegram"],
+    ["telegram", "username"],
+    ["telegram", "userName"],
+    ["telegram", "handle"],
+  ]);
   const referralCode = readString(payload, [["referralCode"], ["user", "referralCode"], ["referral", "code"]]);
 
   return {
@@ -442,7 +661,7 @@ export const toApiKeyProfile = (sessionUser: XSessionUser, payload: unknown): Ap
     apiKeyLast4,
     telegramConnected: readBoolean(
       payload,
-      [["telegramConnected"], ["user", "telegramConnected"], ["telegram", "connected"]],
+      [["telegramConnected"], ["telegramBound"], ["isTelegramBound"], ["user", "telegramConnected"], ["telegram", "connected"], ["telegram", "isBound"]],
       Boolean(telegramUsername),
     ),
     telegramUsername,
@@ -476,6 +695,22 @@ export const fetchApiKeyProfile = async (sessionUser: XSessionUser) => {
   return toApiKeyProfile(sessionUser, payload);
 };
 
+export const fetchApiUsage = async (range: UsageRange) => {
+  const attempts = range === "30d" ? ["30d", "30"] : ["7d", "7"];
+  let lastError: unknown;
+
+  for (const queryRange of attempts) {
+    try {
+      const payload = await apiRequest<unknown>(`/api/v1/twitterUsers/api-keys/usage?range=${encodeURIComponent(queryRange)}`, { method: "GET" });
+      return toApiUsageSeries(payload, range);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError;
+};
+
 export const createApiKey = async (sessionUser: XSessionUser, rotateExisting = false): Promise<ApiKeyMutationResult> => {
   const payload = await apiRequest<unknown>("/api/v1/twitterUsers/api-keys", {
     method: "POST",
@@ -496,10 +731,10 @@ export const createApiKey = async (sessionUser: XSessionUser, rotateExisting = f
   };
 };
 
-export const bindTelegram = async () => {
+export const bindTelegram = async (payload: BindTelegramRequest) => {
   return apiRequest<unknown>("/api/v1/twitterUsers/api-keys/bind-telegram", {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify(payload),
   });
 };
 

@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getXAuthorizationUrl, toApiKeyProfile, toXSessionUser, type XSessionUser } from "@/lib/creditHubAuth";
+import {
+  getApiBaseUrl,
+  getXAuthorizationUrl,
+  normalizeUsageRange,
+  toApiKeyProfile,
+  toApiUsageSeries,
+  toXSessionUser,
+  type XSessionUser,
+} from "@/lib/creditHubAuth";
 
 describe("creditHubAuth", () => {
   const sessionUser: XSessionUser = {
@@ -12,6 +20,7 @@ describe("creditHubAuth", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.useRealTimers();
   });
 
   it("builds the X authorization URL from VITE_PAWX_API_BASE_URL", () => {
@@ -28,6 +37,12 @@ describe("creditHubAuth", () => {
     const url = getXAuthorizationUrl();
 
     expect(url).toBe("https://pawx.example.com/api/v1/auth/x/start");
+  });
+
+  it("trims whitespace around the configured backend url", () => {
+    vi.stubEnv("VITE_PAWX_API_BASE_URL", " http://localhost:3001/ ");
+
+    expect(getApiBaseUrl()).toBe("http://localhost:3001");
   });
 
   it("maps nested session payloads into the authenticated X user", () => {
@@ -186,6 +201,41 @@ describe("creditHubAuth", () => {
     });
   });
 
+  it("maps telegram binding fields from alternative backend response shapes", () => {
+    const profile = toApiKeyProfile(sessionUser, {
+      account: {
+        credits: 2500,
+        telegramCredits: 1500,
+      },
+      telegramBound: true,
+      telegram: {
+        userName: "@allenchu",
+      },
+    });
+
+    expect(profile).toEqual({
+      twitterId: "44196397",
+      name: "Elon Musk",
+      handle: "@elonmusk",
+      avatar: "https://example.com/avatar.jpg",
+      profileUrl: "https://x.com/elonmusk",
+      baseCredits: 2500,
+      telegramBonus: 1500,
+      referralBonus: 0,
+      totalCredits: 4000,
+      creditsUsed: 0,
+      remainingCredits: 4000,
+      hasActiveApiKey: false,
+      apiKeyPreview: "",
+      apiKeyLast4: "",
+      telegramConnected: true,
+      telegramUsername: "@allenchu",
+      referralCode: "",
+      referralCount: 0,
+      statusLabel: "Signed in",
+    });
+  });
+
   it("maps snake_case profile fields from the api key payload", () => {
     const profile = toApiKeyProfile(sessionUser, {
       user: {
@@ -220,6 +270,110 @@ describe("creditHubAuth", () => {
       referralCode: "",
       referralCount: 0,
       statusLabel: "Signed in",
+    });
+  });
+
+  it("normalizes supported usage range query values", () => {
+    expect(normalizeUsageRange("7")).toBe("7d");
+    expect(normalizeUsageRange("7d")).toBe("7d");
+    expect(normalizeUsageRange("30")).toBe("30d");
+    expect(normalizeUsageRange("30d")).toBe("30d");
+    expect(normalizeUsageRange("unexpected")).toBe("7d");
+  });
+
+  it("maps usage payloads and fills missing days with zero values", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-29T12:00:00Z"));
+
+    const usage = toApiUsageSeries(
+      {
+        data: {
+          usage: [
+            {
+              date: "2026-03-27",
+              creditsUsed: 120,
+              requestCount: 3,
+            },
+            {
+              bucketDate: "2026-03-29",
+              totalCreditsUsed: 80,
+              requests: {
+                count: 2,
+              },
+            },
+          ],
+        },
+      },
+      "7",
+    );
+
+    expect(usage.range).toBe("7d");
+    expect(usage.rangeDays).toBe(7);
+    expect(usage.totalCreditsUsed).toBe(200);
+    expect(usage.totalRequestCount).toBe(5);
+    expect(usage.days).toHaveLength(7);
+    expect(usage.days[0]).toMatchObject({
+      date: "2026-03-23",
+      creditsUsed: 0,
+      requestCount: 0,
+    });
+    expect(usage.days[4]).toMatchObject({
+      date: "2026-03-27",
+      creditsUsed: 120,
+      requestCount: 3,
+    });
+    expect(usage.days[5]).toMatchObject({
+      date: "2026-03-28",
+      creditsUsed: 0,
+      requestCount: 0,
+    });
+    expect(usage.days[6]).toMatchObject({
+      date: "2026-03-29",
+      creditsUsed: 80,
+      requestCount: 2,
+    });
+  });
+
+  it("maps signed-in session usage payload shape returned by the backend", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-29T12:00:00Z"));
+
+    const usage = toApiUsageSeries({
+      apiKeyType: "managed",
+      range: "7d",
+      rangeDays: 7,
+      twitterId: "1548365572651757568",
+      telegramId: "1162706985",
+      accountStatus: "active",
+      currentBalance: 3999,
+      totalConsumedCredits: 1,
+      totalRequests: 1,
+      dailyUsage: [
+        { date: "2026-03-23", consumedCredits: 0, requestCount: 0 },
+        { date: "2026-03-24", consumedCredits: 0, requestCount: 0 },
+        { date: "2026-03-25", consumedCredits: 0, requestCount: 0 },
+        { date: "2026-03-26", consumedCredits: 0, requestCount: 0 },
+        { date: "2026-03-27", consumedCredits: 0, requestCount: 0 },
+        { date: "2026-03-28", consumedCredits: 0, requestCount: 0 },
+        { date: "2026-03-29", consumedCredits: 1, requestCount: 1 },
+      ],
+    });
+
+    expect(usage).toMatchObject({
+      range: "7d",
+      rangeDays: 7,
+      apiKeyType: "managed",
+      twitterId: "1548365572651757568",
+      telegramId: "1162706985",
+      accountStatus: "active",
+      currentBalance: 3999,
+      totalCreditsUsed: 1,
+      totalRequestCount: 1,
+    });
+    expect(usage.days[6]).toMatchObject({
+      date: "2026-03-29",
+      creditsUsed: 1,
+      requestCount: 1,
     });
   });
 });
