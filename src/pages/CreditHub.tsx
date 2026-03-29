@@ -7,7 +7,6 @@ import {
   bindTelegram,
   buildEmptyApiUsage,
   buildFallbackProfile,
-  callProtectedApi,
   createApiKey,
   CreditHubApiError,
   fetchApiKeyProfile,
@@ -23,8 +22,6 @@ import {
   type UsageRange,
   type XSessionUser,
 } from "@/lib/creditHubAuth";
-
-const DEFAULT_PROTECTED_PATH = "/api/v1/twitterUsers/info?userId=44196397";
 const TELEGRAM_WIDGET_CALLBACK_NAME = "__pawxTelegramAuth";
 
 interface TelegramWidgetUser {
@@ -68,8 +65,8 @@ const getReadableUsageError = (error: unknown, range: UsageRange) => {
   if (error instanceof CreditHubApiError) {
     if (error.message.toLowerCase().includes("generate_series")) {
       return range === "30d"
-        ? "最近 30 天用量資料暫時無法讀取，已改為顯示最近 7 天。"
-        : "每日用量資料暫時無法讀取，請稍後再試。";
+        ? "Usage data for the last 30 days is temporarily unavailable. Showing the last 7 days instead."
+        : "Daily usage data is temporarily unavailable. Please try again shortly.";
     }
   }
 
@@ -85,14 +82,10 @@ const CreditHub = () => {
   const [isCreatingApiKey, setIsCreatingApiKey] = useState(false);
   const [isRotatingApiKey, setIsRotatingApiKey] = useState(false);
   const [isBindingTelegram, setIsBindingTelegram] = useState(false);
-  const [isCallingProtectedApi, setIsCallingProtectedApi] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [authError, setAuthError] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [latestApiKey, setLatestApiKey] = useState("");
-  const [apiKeyInput, setApiKeyInput] = useState("");
-  const [protectedPath, setProtectedPath] = useState(DEFAULT_PROTECTED_PATH);
-  const [protectedResponse, setProtectedResponse] = useState("");
   const [usageRange, setUsageRange] = useState<UsageRange>("7d");
   const [usage, setUsage] = useState<ApiUsageSeries>(buildEmptyApiUsage("7d"));
   const [usageError, setUsageError] = useState("");
@@ -146,10 +139,9 @@ const CreditHub = () => {
     const bootstrapSession = async () => {
       setIsLoading(true);
       setAuthError("");
-      setProtectedResponse("");
 
       if (isAuthCallback) {
-        setStatusMessage("正在完成 X 登入，準備讀取 session 與 API key 狀態...");
+        setStatusMessage("Finishing X sign-in and loading your session and API key status...");
       } else {
         setStatusMessage("");
       }
@@ -162,7 +154,7 @@ const CreditHub = () => {
           setProfile(null);
           window.sessionStorage.removeItem(AUTH_REDIRECT_STORAGE_KEY);
           if (isAuthCallback) {
-            setAuthError("X 登入完成後沒有讀到有效 session，請確認後端 callback 是否有成功寫入 httpOnly cookie。");
+            setAuthError("X sign-in finished, but no valid session was found. Please verify that the backend callback successfully set the httpOnly cookie.");
           }
           return;
         }
@@ -172,16 +164,15 @@ const CreditHub = () => {
         if (!nextProfile.hasActiveApiKey) {
           const createdApiKey = await createApiKey(authenticatedUser, false);
           setLatestApiKey(createdApiKey.apiKey);
-          setApiKeyInput(createdApiKey.apiKey);
           setProfile(createdApiKey.profile);
           setSessionUser(toSessionUserFromProfile(createdApiKey.profile));
           nextProfile = await loadProfileForUser(toSessionUserFromProfile(createdApiKey.profile));
           setStatusMessage(
-            `X 登入成功，已進入 API Credits 頁面，並自動建立 API key。你目前有 ${nextProfile.totalCredits.toLocaleString()} credits。`,
+            `X sign-in succeeded. You are now in API Credits, and a new API key was created automatically. You currently have ${nextProfile.totalCredits.toLocaleString()} credits.`,
           );
         } else {
           setStatusMessage(
-            `X 登入成功，已進入 API Credits 頁面，目前可用 ${nextProfile.remainingCredits.toLocaleString()} / ${nextProfile.totalCredits.toLocaleString()} credits。`,
+            `X sign-in succeeded. You are now in API Credits with ${nextProfile.remainingCredits.toLocaleString()} / ${nextProfile.totalCredits.toLocaleString()} credits available.`,
           );
         }
 
@@ -212,7 +203,7 @@ const CreditHub = () => {
 
     void loadUsage(usageRange).catch(() => {
       if (usageRange === "30d") {
-        setStatusMessage("最近 30 天用量資料暫時無法讀取，已改為顯示最近 7 天。");
+        setStatusMessage("Usage data for the last 30 days is temporarily unavailable. Showing the last 7 days instead.");
         setUsageRange("7d");
       }
     });
@@ -259,11 +250,12 @@ const CreditHub = () => {
       try {
         const result = await createApiKey(sessionUser, rotateExisting);
         setLatestApiKey(result.apiKey);
-        setApiKeyInput(result.apiKey);
         setProfile(result.profile);
         await loadProfileForUser(sessionUser);
         setStatusMessage(
-          rotateExisting ? "API key 已 rotate，新的 key 只會顯示這一次。" : "API key 建立成功，新的 key 只會顯示這一次。",
+          rotateExisting
+            ? "The API key was rotated successfully. The new full key is shown only this time."
+            : "The API key was created successfully. The new full key is shown only this time.",
         );
       } catch (error) {
         setAuthError(getReadableAuthError(error));
@@ -285,7 +277,7 @@ const CreditHub = () => {
       }
 
       if (!hasConcreteTwitterId(sessionUser.twitterId)) {
-        setAuthError("目前尚未讀到有效的 Twitter ID，請重新登入後再綁定 Telegram。");
+        setAuthError("A valid Twitter ID is not available yet. Please sign in again before linking Telegram.");
         setStatusMessage("");
         return;
       }
@@ -305,8 +297,8 @@ const CreditHub = () => {
         const nextProfile = await loadProfileForUser(sessionUser);
         setStatusMessage(
           nextProfile.telegramConnected
-            ? `Telegram 綁定成功，credits 與綁定狀態已刷新，目前可用 ${nextProfile.remainingCredits.toLocaleString()} / ${nextProfile.totalCredits.toLocaleString()} credits。`
-            : "Telegram 綁定完成，已刷新帳號狀態。",
+            ? `Telegram linked successfully. Credits and account status were refreshed. You now have ${nextProfile.remainingCredits.toLocaleString()} / ${nextProfile.totalCredits.toLocaleString()} credits available.`
+            : "Telegram authorization completed and the account status was refreshed.",
         );
       } catch (error) {
         try {
@@ -317,7 +309,7 @@ const CreditHub = () => {
           if (isTelegramBoundProfile(refreshedProfile) || creditsIncreased) {
             setAuthError("");
             setStatusMessage(
-              `Telegram 綁定成功，credits 與綁定狀態已刷新，目前可用 ${refreshedProfile.remainingCredits.toLocaleString()} / ${refreshedProfile.totalCredits.toLocaleString()} credits。`,
+              `Telegram linked successfully. Credits and account status were refreshed. You now have ${refreshedProfile.remainingCredits.toLocaleString()} / ${refreshedProfile.totalCredits.toLocaleString()} credits available.`,
             );
             return;
           }
@@ -326,7 +318,7 @@ const CreditHub = () => {
         }
 
         if (error instanceof CreditHubApiError && error.status === 403) {
-          setAuthError(`Telegram 已完成授權，但後端沒有接受這次綁定結果。請確認 bind-telegram 是否使用 twitterId=${sessionUser.twitterId} 寫入正確的 DB 帳號。`);
+          setAuthError(`Telegram authorization completed, but the backend rejected the bind result. Please confirm bind-telegram is writing to the correct DB account with twitterId=${sessionUser.twitterId}.`);
           return;
         }
 
@@ -394,55 +386,24 @@ const CreditHub = () => {
     setAuthError("");
     if (!telegramBotUsername) {
       setStatusMessage("");
-      setAuthError("缺少 Telegram bot username 設定，請確認 VITE_TELEGRAM_BOT_USERNAME。");
+      setAuthError("Telegram bot username is missing. Please verify VITE_TELEGRAM_BOT_USERNAME.");
       return;
     }
 
     if (!hasConcreteTwitterId(sessionUser.twitterId)) {
       setStatusMessage("");
-      setAuthError("目前尚未讀到有效的 Twitter ID，請重新登入後再綁定 Telegram。");
+      setAuthError("A valid Twitter ID is not available yet. Please sign in again before linking Telegram.");
       return;
     }
 
     if (!isTelegramWidgetReady) {
       setStatusMessage("");
-      setAuthError("Telegram 授權元件仍在準備中，請稍候再試一次。");
+      setAuthError("The Telegram authorization widget is still loading. Please try again in a moment.");
       return;
     }
 
-    setStatusMessage("請在 Telegram 授權視窗完成確認，成功後會自動綁定帳號並刷新 credits。");
+    setStatusMessage("Complete the confirmation inside the Telegram authorization window. The account will link automatically and refresh your credits.");
   }, [isTelegramWidgetReady, sessionUser, telegramBotUsername]);
-
-  const handleCallProtectedApi = useCallback(async () => {
-    if (!apiKeyInput.trim()) {
-      setAuthError("請先建立、rotate，或手動貼上完整 API key 後再呼叫受保護 API。");
-      return;
-    }
-
-    setAuthError("");
-    setStatusMessage("");
-    setIsCallingProtectedApi(true);
-
-    try {
-      const result = await callProtectedApi(protectedPath, apiKeyInput.trim());
-      setProtectedResponse(`${result.ok ? "OK" : "ERROR"} ${result.status}\n${result.body}`);
-      if (result.ok) {
-        try {
-          await loadUsage(usageRange);
-        } catch {
-          void 0;
-        }
-      }
-      setStatusMessage(
-        result.ok ? "受保護 API 呼叫完成。" : "受保護 API 回傳非 2xx，請檢查 key 權限、endpoint 或後端回應內容。",
-      );
-    } catch (error) {
-      setProtectedResponse("");
-      setAuthError(getReadableAuthError(error));
-    } finally {
-      setIsCallingProtectedApi(false);
-    }
-  }, [apiKeyInput, loadUsage, protectedPath, usageRange]);
 
   const handleLogout = useCallback(async () => {
     setIsLoggingOut(true);
@@ -454,9 +415,6 @@ const CreditHub = () => {
       setSessionUser(null);
       setProfile(null);
       setLatestApiKey("");
-      setApiKeyInput("");
-      setProtectedResponse("");
-      setProtectedPath(DEFAULT_PROTECTED_PATH);
       setUsageRange("7d");
       setUsage(buildEmptyApiUsage("7d"));
       setUsageError("");
@@ -483,9 +441,6 @@ const CreditHub = () => {
       sessionUser={sessionUser}
       profile={profile}
       latestApiKey={latestApiKey}
-      apiKeyInput={apiKeyInput}
-      protectedPath={protectedPath}
-      protectedResponse={protectedResponse}
       statusMessage={statusMessage}
       errorMessage={authError}
       usage={usage}
@@ -495,7 +450,6 @@ const CreditHub = () => {
       isCreatingApiKey={isCreatingApiKey}
       isRotatingApiKey={isRotatingApiKey}
       isBindingTelegram={isBindingTelegram}
-      isCallingProtectedApi={isCallingProtectedApi}
       isLoggingOut={isLoggingOut}
       isUsageLoading={isUsageLoading}
       isTelegramWidgetReady={isTelegramWidgetReady}
@@ -511,8 +465,6 @@ const CreditHub = () => {
         void refreshProfile();
       }}
       onUsageRangeChange={setUsageRange}
-      onApiKeyInputChange={setApiKeyInput}
-      onProtectedPathChange={setProtectedPath}
       onCreateApiKey={() => {
         void handleCreateApiKey(false);
       }}
@@ -521,9 +473,6 @@ const CreditHub = () => {
       }}
       onBindTelegram={() => {
         void handleBindTelegram();
-      }}
-      onCallProtectedApi={() => {
-        void handleCallProtectedApi();
       }}
       onLogout={() => {
         void handleLogout();

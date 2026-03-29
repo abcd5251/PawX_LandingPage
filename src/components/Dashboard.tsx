@@ -1,20 +1,15 @@
 import { motion } from "framer-motion";
-import { BarChart3, Check, Copy, KeyRound, Link2, LogOut, RefreshCw, Send, ShieldCheck, Users, Zap } from "lucide-react";
+import { BarChart3, Check, Copy, KeyRound, Link2, LogOut, RefreshCw, Send, ShieldCheck, Users } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import PawIcon from "@/components/PawIcon";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import type { ApiKeyProfile, ApiUsageSeries, UsageRange, XSessionUser } from "@/lib/creditHubAuth";
 
 interface DashboardProps {
   sessionUser: XSessionUser;
   profile: ApiKeyProfile | null;
   latestApiKey: string;
-  apiKeyInput: string;
-  protectedPath: string;
-  protectedResponse: string;
   statusMessage: string;
   errorMessage: string;
   usage: ApiUsageSeries;
@@ -24,36 +19,22 @@ interface DashboardProps {
   isCreatingApiKey: boolean;
   isRotatingApiKey: boolean;
   isBindingTelegram: boolean;
-  isCallingProtectedApi: boolean;
   isLoggingOut: boolean;
   isUsageLoading: boolean;
   isTelegramWidgetReady: boolean;
   telegramWidgetContent: ReactNode;
   onRefreshProfile: () => void;
   onUsageRangeChange: (value: UsageRange) => void;
-  onApiKeyInputChange: (value: string) => void;
-  onProtectedPathChange: (value: string) => void;
   onCreateApiKey: () => void;
   onRotateApiKey: () => void;
   onBindTelegram: () => void;
-  onCallProtectedApi: () => void;
   onLogout: () => void;
 }
-
-const protectedApiPresets = [
-  "/api/v1/twitterUsers/info?userId=44196397",
-  "/api/v1/twitterUsers/kol-users",
-  "/api/v1/twitterUsers/tweets",
-  "/api/v1/keywordMonitors",
-];
 
 const Dashboard = ({
   sessionUser,
   profile,
   latestApiKey,
-  apiKeyInput,
-  protectedPath,
-  protectedResponse,
   statusMessage,
   errorMessage,
   usage,
@@ -63,24 +44,18 @@ const Dashboard = ({
   isCreatingApiKey,
   isRotatingApiKey,
   isBindingTelegram,
-  isCallingProtectedApi,
   isLoggingOut,
   isUsageLoading,
   isTelegramWidgetReady,
   telegramWidgetContent,
   onRefreshProfile,
   onUsageRangeChange,
-  onApiKeyInputChange,
-  onProtectedPathChange,
   onCreateApiKey,
   onRotateApiKey,
   onBindTelegram,
-  onCallProtectedApi,
   onLogout,
 }: DashboardProps) => {
-  const [copiedValue, setCopiedValue] = useState<
-    "" | "key" | "handle" | "twitterId" | "avatar" | "profileUrl" | "referralCode" | "referralLink"
-  >("");
+  const [copiedValue, setCopiedValue] = useState<"" | "key" | "handle" | "twitterId" | "avatar" | "profileUrl" | "referralLink">("");
 
   const activeProfile = profile ?? {
     ...sessionUser,
@@ -127,7 +102,7 @@ const Dashboard = ({
 
   const copyText = async (
     value: string,
-    type: "key" | "handle" | "twitterId" | "avatar" | "profileUrl" | "referralCode" | "referralLink",
+    type: "key" | "handle" | "twitterId" | "avatar" | "profileUrl" | "referralLink",
   ) => {
     if (!value) {
       return;
@@ -306,8 +281,8 @@ const Dashboard = ({
                 <p className="text-sm font-medium">Current status</p>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {activeProfile.hasActiveApiKey
-                    ? `已有 active key${activeProfile.apiKeyLast4 ? `，last4 為 ${activeProfile.apiKeyLast4}` : activeProfile.apiKeyPreview ? ` (${activeProfile.apiKeyPreview})` : ""}，可 rotate 取得新 key。`
-                    : "尚未建立 API key，可直接按 Create API Key。"}
+                    ? `Active key available${activeProfile.apiKeyLast4 ? ` · ${activeProfile.apiKeyLast4}` : activeProfile.apiKeyPreview ? ` · ${activeProfile.apiKeyPreview}` : ""}. Rotating will replace it and invalidate the old key.`
+                    : "No API key has been created yet. Use Create API Key to generate one."}
                 </p>
               </div>
 
@@ -328,15 +303,10 @@ const Dashboard = ({
                 </Button>
               )}
 
-              <div className="space-y-2">
-                <p className="text-sm font-medium">API key for protected APIs</p>
-                <Input
-                  value={apiKeyInput}
-                  onChange={(event) => onApiKeyInputChange(event.target.value)}
-                  placeholder="建立或 rotate 後會自動帶入，也可手動貼上既有 key"
-                />
-                <p className="text-xs text-muted-foreground">
-                  後端通常只會在建立或 rotate 當下回傳完整 key 一次，之後只能看到 preview。
+              <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+                <p className="text-sm font-medium text-foreground">Shown once only</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Save the full key now. If you leave or refresh, it will disappear. Rotating disables the old key and only the new key will work.
                 </p>
               </div>
 
@@ -404,8 +374,8 @@ const Dashboard = ({
                   <div className="rounded-xl border border-dashed border-[hsl(200,80%,50%)]/30 bg-[hsl(200,80%,50%)]/5 p-4">
                     <p className="text-sm text-muted-foreground">
                       {isTelegramWidgetReady
-                        ? "點擊 Connect Telegram 後會直接開啟 Telegram 授權視窗，完成確認後會自動顯示綁定結果。"
-                        : "正在準備 Telegram 授權元件，完成後即可直接開啟 OAuth 視窗。"}
+                        ? "Click Connect Telegram to open the Telegram authorization window. Once approved, the account will be linked automatically."
+                        : "Preparing the Telegram authorization widget. You can continue as soon as it is ready."}
                     </p>
                   </div>
                 )}
@@ -441,22 +411,18 @@ const Dashboard = ({
                 </div>
 
                 {referralLink ? (
-                  <>
-                    <p className="break-all text-sm text-muted-foreground">{referralLink}</p>
-                    <div className="flex flex-wrap gap-3">
-                      <Button variant="outline" size="sm" onClick={() => copyText(referralLink, "referralLink")}>
-                        {copiedValue === "referralLink" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                        {copiedValue === "referralLink" ? "Copied link" : "Copy Referral Link"}
-                      </Button>
-                      <Button variant="outline" size="sm" onClick={() => copyText(activeProfile.referralCode, "referralCode")}>
-                        {copiedValue === "referralCode" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                        {copiedValue === "referralCode" ? "Copied code" : `Code: ${activeProfile.referralCode}`}
-                      </Button>
+                  <div className="space-y-3">
+                    <div className="rounded-xl bg-background px-4 py-3 text-sm">
+                      <p className="mt-1 break-all text-muted-foreground">{referralLink}</p>
                     </div>
-                  </>
+                    <Button variant="outline" size="sm" onClick={() => copyText(referralLink, "referralLink")}>
+                      {copiedValue === "referralLink" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                      {copiedValue === "referralLink" ? "Copied link" : "Copy Referral Link"}
+                    </Button>
+                  </div>
                 ) : (
                   <p className="rounded-xl bg-background px-4 py-3 text-sm text-muted-foreground">
-                    {activeProfile.telegramConnected ? "Waiting for backend to return your referral code" : "Link Telegram first to start earning referral credits"}
+                    {activeProfile.telegramConnected ? "Waiting for the backend to return your referral link" : "Link Telegram first to unlock your referral link"}
                   </p>
                 )}
               </div>
@@ -560,48 +526,6 @@ const Dashboard = ({
           ) : null}
         </motion.section>
 
-        <motion.section
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.35 }}
-          className="rounded-2xl border bg-card p-6 shadow-card"
-        >
-          <div className="mb-4 flex items-center gap-3">
-            <Zap className="h-5 w-5 text-primary" />
-            <h2 className="text-lg font-bold">Protected API Test</h2>
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex flex-wrap gap-2">
-              {protectedApiPresets.map((preset) => (
-                <Button key={preset} variant="outline" size="sm" onClick={() => onProtectedPathChange(preset)}>
-                  {preset}
-                </Button>
-              ))}
-            </div>
-
-            <Input
-              value={protectedPath}
-              onChange={(event) => onProtectedPathChange(event.target.value)}
-              placeholder="/api/v1/twitterUsers/info?userId=44196397"
-            />
-
-            <div className="flex flex-wrap gap-3">
-              <Button onClick={onCallProtectedApi} disabled={isCallingProtectedApi}>
-                <ShieldCheck className="h-4 w-4" />
-                {isCallingProtectedApi ? "Calling protected API..." : "Call protected API"}
-              </Button>
-              <p className="self-center text-sm text-muted-foreground">Header 會自動帶上 X-API-Key</p>
-            </div>
-
-            <Textarea
-              value={protectedResponse}
-              readOnly
-              className="min-h-[240px] font-mono text-xs"
-              placeholder={'呼叫結果會顯示在這裡，例如\n{\n  "status": 200,\n  "body": {...}\n}'}
-            />
-          </div>
-        </motion.section>
       </main>
     </div>
   );

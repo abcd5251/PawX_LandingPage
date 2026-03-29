@@ -719,7 +719,7 @@ export const createApiKey = async (sessionUser: XSessionUser, rotateExisting = f
   const apiKey = readApiKeyValue(payload);
 
   if (!apiKey) {
-    throw new Error("後端沒有回傳新的 API key，請確認建立或 rotate API key 的回應格式。");
+    throw new Error("The backend did not return a new API key. Please verify the create or rotate API response format.");
   }
 
   return {
@@ -759,19 +759,19 @@ export const callProtectedApi = async (path: string, apiKey: string): Promise<Pr
 export const getReadableAuthError = (error: unknown) => {
   if (error instanceof CreditHubApiError) {
     if (error.status === 401) {
-      return "X 登入尚未完成或 session 已失效，請重新點擊 Sign in with X。";
+      return "X sign-in is incomplete or the session has expired. Please click Sign in with X again.";
     }
 
     if (error.status === 403) {
-      return "目前登入狀態未通過後端驗證，請確認 httpOnly cookie、CORS 與 session 設定。";
+      return "The current sign-in state was rejected by the backend. Please verify the httpOnly cookie, CORS, and session configuration.";
     }
 
     if (error.status === 404) {
-      return "目前帳號尚未建立 API key profile，可直接按 Create API Key。";
+      return "No API key profile exists for this account yet. You can create one with Create API Key.";
     }
 
     if (error.status === 409) {
-      return "你已經有 active API key，可改用 Rotate API Key。";
+      return "An active API key already exists. Use Rotate API Key if you need a new one.";
     }
 
     return error.message;
@@ -781,5 +781,5 @@ export const getReadableAuthError = (error: unknown) => {
     return error.message;
   }
 
-  return "登入流程發生未知錯誤。";
+  return "An unknown error occurred during the sign-in flow.";
 };
