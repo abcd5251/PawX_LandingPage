@@ -4,12 +4,14 @@ import { type ReactNode, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import PawIcon from "@/components/PawIcon";
 import { Button } from "@/components/ui/button";
-import type { ApiKeyProfile, ApiUsageSeries, UsageRange, XSessionUser } from "@/lib/creditHubAuth";
+import type { ApiKeyProfile, ApiUsageSeries, ReferralCodeResolution, ReferralProfile, UsageRange, XSessionUser } from "@/lib/creditHubAuth";
 
 interface DashboardProps {
   sessionUser: XSessionUser;
   profile: ApiKeyProfile | null;
   latestApiKey: string;
+  referralProfile: ReferralProfile | null;
+  resolvedReferral: ReferralCodeResolution | null;
   statusMessage: string;
   errorMessage: string;
   usage: ApiUsageSeries;
@@ -35,6 +37,8 @@ const Dashboard = ({
   sessionUser,
   profile,
   latestApiKey,
+  referralProfile,
+  resolvedReferral,
   statusMessage,
   errorMessage,
   usage,
@@ -84,13 +88,23 @@ const Dashboard = ({
   }, [activeProfile.creditsUsed, activeProfile.totalCredits]);
 
   const referralLink = useMemo(() => {
-    if (!activeProfile.referralCode) {
+    if (referralProfile?.referralLink) {
+      return referralProfile.referralLink;
+    }
+
+    const referralCode = referralProfile?.referralCode || activeProfile.referralCode;
+
+    if (!referralCode) {
       return "";
     }
 
     const origin = typeof window === "undefined" ? "" : window.location.origin;
-    return `${origin}/?ref=${encodeURIComponent(activeProfile.referralCode)}`;
-  }, [activeProfile.referralCode]);
+    return `${origin}/?ref=${encodeURIComponent(referralCode)}`;
+  }, [activeProfile.referralCode, referralProfile?.referralCode, referralProfile?.referralLink]);
+
+  const peopleReferred = referralProfile?.peopleReferred ?? activeProfile.referralCount;
+  const creditsEarned = referralProfile?.creditsEarned ?? activeProfile.referralBonus;
+  const inviterDisplay = resolvedReferral?.inviterHandle || resolvedReferral?.inviterName;
 
   const averageDailyUsage = useMemo(() => {
     if (!usage.days.length) {
@@ -395,11 +409,11 @@ const Dashboard = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-xl bg-muted/50 p-4 text-center">
-                  <p className="text-3xl font-extrabold">{activeProfile.referralCount.toLocaleString()}</p>
+                  <p className="text-3xl font-extrabold">{peopleReferred.toLocaleString()}</p>
                   <p className="mt-1 text-xs text-muted-foreground">People Referred</p>
                 </div>
                 <div className="rounded-xl bg-muted/50 p-4 text-center">
-                  <p className="text-3xl font-extrabold text-[hsl(28,94%,53%)]">+{activeProfile.referralBonus.toLocaleString()}</p>
+                  <p className="text-3xl font-extrabold text-[hsl(28,94%,53%)]">+{creditsEarned.toLocaleString()}</p>
                   <p className="mt-1 text-xs text-muted-foreground">Credits Earned</p>
                 </div>
               </div>
@@ -409,6 +423,12 @@ const Dashboard = ({
                   <Link2 className="h-4 w-4 text-primary" />
                   <p className="text-sm font-medium">Referral Link</p>
                 </div>
+
+                {resolvedReferral?.isValid && inviterDisplay && !activeProfile.telegramConnected ? (
+                  <p className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-foreground">
+                    Invited by {inviterDisplay}. Link Telegram to apply this referral.
+                  </p>
+                ) : null}
 
                 {referralLink ? (
                   <div className="space-y-3">

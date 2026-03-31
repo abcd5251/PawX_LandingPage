@@ -9,11 +9,15 @@ import ApiSection from "@/components/ApiSection";
 import PartnersSection from "@/components/PartnersSection";
 import CtaSection from "@/components/CtaSection";
 import Footer from "@/components/Footer";
-import { AUTH_REDIRECT_STORAGE_KEY, fetchXSession } from "@/lib/creditHubAuth";
+import { AUTH_REDIRECT_STORAGE_KEY, fetchXSession, persistReferralCodeFromUrl } from "@/lib/creditHubAuth";
 
 const Index = () => {
   const location = useLocation();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    persistReferralCodeFromUrl(location.search);
+  }, [location.search]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);

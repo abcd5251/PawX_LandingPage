@@ -7,17 +7,24 @@ import {
   bindTelegram,
   buildEmptyApiUsage,
   buildFallbackProfile,
+  clearStoredReferralCode,
   createApiKey,
   CreditHubApiError,
   fetchApiKeyProfile,
+  fetchReferralProfile,
   fetchApiUsage,
   fetchXSession,
+  getStoredReferralCode,
   getTelegramBotUsername,
   getReadableAuthError,
   getXAuthorizationUrl,
   logoutXSession,
+  persistReferralCodeFromUrl,
+  resolveReferralCode,
   type ApiKeyProfile,
   type ApiUsageSeries,
+  type ReferralCodeResolution,
+  type ReferralProfile,
   type TelegramAuthPayload,
   type UsageRange,
   type XSessionUser,
@@ -86,6 +93,8 @@ const CreditHub = () => {
   const [authError, setAuthError] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [latestApiKey, setLatestApiKey] = useState("");
+  const [referralProfile, setReferralProfile] = useState<ReferralProfile | null>(null);
+  const [resolvedReferral, setResolvedReferral] = useState<ReferralCodeResolution | null>(null);
   const [usageRange, setUsageRange] = useState<UsageRange>("7d");
   const [usage, setUsage] = useState<ApiUsageSeries>(buildEmptyApiUsage("7d"));
   const [usageError, setUsageError] = useState("");
@@ -133,6 +142,27 @@ const CreditHub = () => {
     } finally {
       setIsUsageLoading(false);
     }
+  }, []);
+
+  const loadReferralProfile = useCallback(async () => {
+    try {
+      const nextReferralProfile = await fetchReferralProfile();
+      setReferralProfile(nextReferralProfile);
+      return nextReferralProfile;
+    } catch (error) {
+      if (error instanceof CreditHubApiError && error.status === 404) {
+        setReferralProfile(null);
+        return null;
+      }
+
+      throw error;
+    }
+  }, []);
+
+  const loadResolvedReferral = useCallback(async (referralCode: string) => {
+    const resolved = await resolveReferralCode(referralCode);
+    setResolvedReferral(resolved);
+    return resolved;
   }, []);
 
   useEffect(() => {
@@ -195,6 +225,19 @@ const CreditHub = () => {
   }, [isAuthCallback, loadProfileForUser, navigate]);
 
   useEffect(() => {
+    const referralCode = persistReferralCodeFromUrl(location.search) ?? getStoredReferralCode();
+
+    if (!referralCode) {
+      setResolvedReferral(null);
+      return;
+    }
+
+    void loadResolvedReferral(referralCode).catch(() => {
+      void 0;
+    });
+  }, [loadResolvedReferral, location.search]);
+
+  useEffect(() => {
     if (!sessionUser) {
       setUsage(buildEmptyApiUsage(usageRange));
       setUsageError("");
@@ -209,6 +252,17 @@ const CreditHub = () => {
     });
   }, [loadUsage, sessionUser, usageRange]);
 
+  useEffect(() => {
+    if (!sessionUser) {
+      setReferralProfile(null);
+      return;
+    }
+
+    void loadReferralProfile().catch(() => {
+      void 0;
+    });
+  }, [loadReferralProfile, profile?.telegramConnected, sessionUser]);
+
   const refreshProfile = useCallback(async () => {
     if (!sessionUser) {
       return;
@@ -222,7 +276,12 @@ const CreditHub = () => {
     } catch {
       void 0;
     }
-  }, [loadProfileForUser, loadUsage, sessionUser, usageRange]);
+    try {
+      await loadReferralProfile();
+    } catch {
+      void 0;
+    }
+  }, [loadProfileForUser, loadReferralProfile, loadUsage, sessionUser, usageRange]);
 
   const handleTwitterLogin = () => {
     setAuthError("");
@@ -289,12 +348,17 @@ const CreditHub = () => {
       setIsBindingTelegram(true);
 
       try {
+        const storedReferralCode = getStoredReferralCode() || undefined;
         await bindTelegram({
           twitterId: sessionUser.twitterId,
           telegramAuth: toTelegramAuthPayload(user),
+          referralCode: storedReferralCode,
         });
 
         const nextProfile = await loadProfileForUser(sessionUser);
+        await loadReferralProfile();
+        clearStoredReferralCode();
+        setResolvedReferral(null);
         setStatusMessage(
           nextProfile.telegramConnected
             ? `Telegram linked successfully. Credits and account status were refreshed. You now have ${nextProfile.remainingCredits.toLocaleString()} / ${nextProfile.totalCredits.toLocaleString()} credits available.`
@@ -308,6 +372,13 @@ const CreditHub = () => {
 
           if (isTelegramBoundProfile(refreshedProfile) || creditsIncreased) {
             setAuthError("");
+            try {
+              await loadReferralProfile();
+            } catch {
+              void 0;
+            }
+            clearStoredReferralCode();
+            setResolvedReferral(null);
             setStatusMessage(
               `Telegram linked successfully. Credits and account status were refreshed. You now have ${refreshedProfile.remainingCredits.toLocaleString()} / ${refreshedProfile.totalCredits.toLocaleString()} credits available.`,
             );
@@ -327,7 +398,7 @@ const CreditHub = () => {
         setIsBindingTelegram(false);
       }
     },
-    [loadProfileForUser, profile, sessionUser],
+    [loadProfileForUser, loadReferralProfile, profile, sessionUser],
   );
 
   useEffect(() => {
@@ -415,6 +486,8 @@ const CreditHub = () => {
       setSessionUser(null);
       setProfile(null);
       setLatestApiKey("");
+      setReferralProfile(null);
+      setResolvedReferral(null);
       setUsageRange("7d");
       setUsage(buildEmptyApiUsage("7d"));
       setUsageError("");
@@ -441,6 +514,8 @@ const CreditHub = () => {
       sessionUser={sessionUser}
       profile={profile}
       latestApiKey={latestApiKey}
+      referralProfile={referralProfile}
+      resolvedReferral={resolvedReferral}
       statusMessage={statusMessage}
       errorMessage={authError}
       usage={usage}

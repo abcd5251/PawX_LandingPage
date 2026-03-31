@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  clearStoredReferralCode,
+  getStoredReferralCode,
   getApiBaseUrl,
   getXAuthorizationUrl,
   normalizeUsageRange,
+  persistReferralCodeFromUrl,
+  toReferralCodeResolution,
+  toReferralProfile,
   toApiKeyProfile,
   toApiUsageSeries,
   toXSessionUser,
@@ -21,6 +26,7 @@ describe("creditHubAuth", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.useRealTimers();
+    window.localStorage.clear();
   });
 
   it("builds the X authorization URL from VITE_PAWX_API_BASE_URL", () => {
@@ -270,6 +276,53 @@ describe("creditHubAuth", () => {
       referralCode: "",
       referralCount: 0,
       statusLabel: "Signed in",
+    });
+  });
+
+  it("stores and clears referral codes from the url", () => {
+    expect(persistReferralCodeFromUrl("?ref=ABC123")).toBe("ABC123");
+    expect(getStoredReferralCode()).toBe("ABC123");
+
+    clearStoredReferralCode();
+
+    expect(getStoredReferralCode()).toBeNull();
+  });
+
+  it("maps dedicated referral profile payloads", () => {
+    const referralProfile = toReferralProfile({
+      referralCode: "ABC123",
+      stats: {
+        peopleReferred: 7,
+        creditsEarned: 3500,
+      },
+      referrals: [{ twitterId: "1" }],
+    });
+
+    expect(referralProfile.referralCode).toBe("ABC123");
+    expect(referralProfile.referralLink).toContain("?ref=ABC123");
+    expect(referralProfile.peopleReferred).toBe(7);
+    expect(referralProfile.creditsEarned).toBe(3500);
+    expect(referralProfile.referrals).toHaveLength(1);
+  });
+
+  it("maps referral resolve payloads and normalizes inviter handles", () => {
+    const resolved = toReferralCodeResolution(
+      {
+        valid: true,
+        inviter: {
+          name: "Allen",
+          username: "allen_test",
+        },
+      },
+      "ABC123",
+    );
+
+    expect(resolved).toEqual({
+      referralCode: "ABC123",
+      isValid: true,
+      inviterName: "Allen",
+      inviterHandle: "@allen_test",
+      message: "",
     });
   });
 

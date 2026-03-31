@@ -57,6 +57,22 @@ export interface BindTelegramRequest {
   referralCode?: string;
 }
 
+export interface ReferralProfile {
+  referralCode: string;
+  referralLink: string;
+  peopleReferred: number;
+  creditsEarned: number;
+  referrals: unknown[];
+}
+
+export interface ReferralCodeResolution {
+  referralCode: string;
+  isValid: boolean;
+  inviterName: string;
+  inviterHandle: string;
+  message: string;
+}
+
 export type UsageRange = "7d" | "30d";
 
 export interface ApiUsageDay {
@@ -80,6 +96,7 @@ export interface ApiUsageSeries {
 }
 
 export const AUTH_REDIRECT_STORAGE_KEY = "pawx-credit-hub-auth-redirect";
+export const REFERRAL_CODE_STORAGE_KEY = "pawx_referral_code";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -192,6 +209,14 @@ const trimEnvValue = (value?: string) => value?.trim() || "";
 const normalizeHandle = (value: string, twitterId: string) => {
   if (!value) {
     return `@${twitterId}`;
+  }
+
+  return value.startsWith("@") ? value : `@${value}`;
+};
+
+const normalizeOptionalHandle = (value: string) => {
+  if (!value) {
+    return "";
   }
 
   return value.startsWith("@") ? value : `@${value}`;
@@ -310,6 +335,38 @@ export const getApiBaseUrl = () => {
 export const getTelegramBotUsername = () => trimEnvValue(import.meta.env.VITE_TELEGRAM_BOT_USERNAME);
 
 export const getXAuthorizationUrl = () => `${getApiBaseUrl()}/api/v1/auth/x/start`;
+
+export const persistReferralCodeFromUrl = (search?: string) => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const params = new URLSearchParams(search ?? window.location.search);
+  const referralCode = params.get("ref")?.trim();
+
+  if (!referralCode) {
+    return null;
+  }
+
+  window.localStorage.setItem(REFERRAL_CODE_STORAGE_KEY, referralCode);
+  return referralCode;
+};
+
+export const getStoredReferralCode = () => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window.localStorage.getItem(REFERRAL_CODE_STORAGE_KEY)?.trim() || null;
+};
+
+export const clearStoredReferralCode = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.removeItem(REFERRAL_CODE_STORAGE_KEY);
+};
 
 export const normalizeUsageRange = (value?: string): UsageRange => {
   const normalized = value?.trim().toLowerCase();
@@ -526,6 +583,71 @@ export const buildFallbackProfile = (sessionUser: XSessionUser): ApiKeyProfile =
   statusLabel: "Signed in",
 });
 
+const buildReferralLink = (referralCode: string, explicitReferralLink = "") => {
+  if (explicitReferralLink) {
+    return explicitReferralLink;
+  }
+
+  if (!referralCode) {
+    return "";
+  }
+
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const path = `/?ref=${encodeURIComponent(referralCode)}`;
+  return origin ? `${origin}${path}` : path;
+};
+
+const readReferralCode = (payload: unknown, fallback = "") =>
+  readString(payload, [["referralCode"], ["code"], ["referral", "code"], ["data", "referralCode"], ["data", "code"]], fallback);
+
+export const toReferralProfile = (payload: unknown): ReferralProfile => {
+  const referralCode = readReferralCode(payload);
+  const referralLink = buildReferralLink(
+    referralCode,
+    readString(payload, [["referralLink"], ["link"], ["referral", "link"], ["data", "referralLink"], ["data", "link"]]),
+  );
+
+  return {
+    referralCode,
+    referralLink,
+    peopleReferred: readNumber(
+      payload,
+      [["peopleReferred"], ["referralCount"], ["stats", "peopleReferred"], ["referral", "count"], ["data", "stats", "peopleReferred"]],
+      0,
+    ),
+    creditsEarned: readNumber(
+      payload,
+      [["creditsEarned"], ["referralBonus"], ["stats", "creditsEarned"], ["referral", "creditsEarned"], ["data", "stats", "creditsEarned"]],
+      0,
+    ),
+    referrals: readArray(payload, [["referrals"], ["items"], ["data", "referrals"], ["data", "items"]]),
+  };
+};
+
+export const toReferralCodeResolution = (
+  payload: unknown,
+  fallbackReferralCode = "",
+  fallbackIsValid = false,
+): ReferralCodeResolution => ({
+  referralCode: readReferralCode(payload, fallbackReferralCode),
+  isValid: readBoolean(
+    payload,
+    [["isValid"], ["valid"], ["ok"], ["exists"], ["found"], ["data", "isValid"], ["data", "valid"]],
+    fallbackIsValid,
+  ),
+  inviterName: readString(
+    payload,
+    [["inviterName"], ["inviter", "name"], ["invitedBy", "name"], ["referralOwner", "name"], ["owner", "name"]],
+  ),
+  inviterHandle: normalizeOptionalHandle(
+    readString(
+      payload,
+      [["inviterHandle"], ["inviter", "handle"], ["inviter", "username"], ["invitedBy", "handle"], ["invitedBy", "username"]],
+    ),
+  ),
+  message: readString(payload, [["message"], ["detail"], ["error"], ["data", "message"]]),
+});
+
 export const toApiKeyProfile = (sessionUser: XSessionUser, payload: unknown): ApiKeyProfile => {
   const twitterId = readString(payload, [["twitterId"], ["id"], ["userId"], ["user", "twitterId"], ["user", "id"], ["user", "userId"]], sessionUser.twitterId);
   const name = readString(payload, [["name"], ["displayName"], ["user", "name"], ["user", "displayName"]], sessionUser.name);
@@ -693,6 +815,34 @@ export const logoutXSession = async () => {
 export const fetchApiKeyProfile = async (sessionUser: XSessionUser) => {
   const payload = await apiRequest<unknown>("/api/v1/twitterUsers/api-keys/me", { method: "GET" });
   return toApiKeyProfile(sessionUser, payload);
+};
+
+export const fetchReferralProfile = async () => {
+  const payload = await apiRequest<unknown>("/api/v1/twitterUsers/api-keys/referral", { method: "GET" });
+  return toReferralProfile(payload);
+};
+
+export const resolveReferralCode = async (referralCode: string) => {
+  const response = await fetch(
+    `${getApiBaseUrl()}/api/v1/twitterUsers/api-keys/referral/resolve?ref=${encodeURIComponent(referralCode)}`,
+    {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+      },
+    },
+  );
+
+  if (response.status === 404) {
+    return toReferralCodeResolution(await readResponseBody(response), referralCode, false);
+  }
+
+  if (!response.ok) {
+    throw await buildErrorMessage(response);
+  }
+
+  return toReferralCodeResolution(await readResponseBody(response), referralCode, true);
 };
 
 export const fetchApiUsage = async (range: UsageRange) => {
