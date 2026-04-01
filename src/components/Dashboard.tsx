@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { BarChart3, Check, Copy, KeyRound, Link2, LogOut, RefreshCw, Send, ShieldCheck, Users } from "lucide-react";
+import { BarChart3, Check, Copy, ExternalLink, KeyRound, Link2, LogOut, MessageCircleMore, RefreshCw, Send, ShieldCheck, Users, Wallet } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import PawIcon from "@/components/PawIcon";
@@ -33,6 +33,40 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
+const SUPPORT_CONTACT_URL = "https://t.me/pawx_ai";
+const TOP_UP_PLANS = [
+  {
+    name: "Builder Pack",
+    price: "20 USDC",
+    credits: "1,600 Credits",
+    description: "Best for trying the API with a practical starter balance.",
+    features: ["Top up once", "Manual activation support", "Good for testing and small workloads"],
+    href: SUPPORT_CONTACT_URL,
+    actionLabel: "Top Up 20 USDC",
+    highlighted: false,
+  },
+  {
+    name: "Growth Pack",
+    price: "100 USDC",
+    credits: "10,000 Credits",
+    description: "Higher volume credits for active builders and internal tools.",
+    features: ["Better effective rate", "Ideal for production usage", "Priority manual confirmation"],
+    href: SUPPORT_CONTACT_URL,
+    actionLabel: "Top Up 100 USDC",
+    highlighted: true,
+  },
+  {
+    name: "Custom Plan",
+    price: "Flexible",
+    credits: "Custom Credits",
+    description: "For larger monthly usage, team access, or bespoke enterprise needs.",
+    features: ["Custom credit size", "Tailored commercial plan", "Direct contact with the team"],
+    href: SUPPORT_CONTACT_URL,
+    actionLabel: "Contact Us",
+    highlighted: false,
+  },
+] as const;
+
 const Dashboard = ({
   sessionUser,
   profile,
@@ -59,7 +93,7 @@ const Dashboard = ({
   onBindTelegram,
   onLogout,
 }: DashboardProps) => {
-  const [copiedValue, setCopiedValue] = useState<"" | "key" | "handle" | "twitterId" | "avatar" | "profileUrl" | "referralLink">("");
+  const [copiedValue, setCopiedValue] = useState<"" | "key" | "handle" | "twitterId" | "referralCode" | "referralLink">("");
 
   const activeProfile = profile ?? {
     ...sessionUser,
@@ -105,6 +139,10 @@ const Dashboard = ({
   const peopleReferred = referralProfile?.peopleReferred ?? activeProfile.referralCount;
   const creditsEarned = referralProfile?.creditsEarned ?? activeProfile.referralBonus;
   const inviterDisplay = resolvedReferral?.inviterHandle || resolvedReferral?.inviterName;
+  const referralCodeValue = referralProfile?.referralCode || activeProfile.referralCode;
+  const apiKeyStatusText = activeProfile.hasActiveApiKey
+    ? `Active key available${activeProfile.apiKeyLast4 ? ` · ${activeProfile.apiKeyLast4}` : activeProfile.apiKeyPreview ? ` · ${activeProfile.apiKeyPreview}` : ""}`
+    : "No API key created";
 
   const averageDailyUsage = useMemo(() => {
     if (!usage.days.length) {
@@ -116,7 +154,7 @@ const Dashboard = ({
 
   const copyText = async (
     value: string,
-    type: "key" | "handle" | "twitterId" | "avatar" | "profileUrl" | "referralLink",
+    type: "key" | "handle" | "twitterId" | "referralCode" | "referralLink",
   ) => {
     if (!value) {
       return;
@@ -162,108 +200,173 @@ const Dashboard = ({
           animate={{ opacity: 1, y: 0 }}
           className="rounded-2xl border bg-card p-6 shadow-card md:p-8"
         >
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-            <div className="space-y-3">
-              <p className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                <ShieldCheck className="h-4 w-4 text-primary" />
-                Authenticated with X session
-              </p>
-              <div>
-                <p className="text-3xl font-extrabold md:text-5xl">{activeProfile.remainingCredits.toLocaleString()}</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Remaining credits / {activeProfile.totalCredits.toLocaleString()} total
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
-                <span className="rounded-full border px-3 py-1">{activeProfile.statusLabel}</span>
-                <span className="rounded-full border px-3 py-1">Twitter ID {activeProfile.twitterId}</span>
-                <span className="rounded-full border px-3 py-1">
-                  {activeProfile.hasActiveApiKey ? "API key active" : "No API key yet"}
-                </span>
-                {activeProfile.apiKeyLast4 ? (
-                  <span className="rounded-full border px-3 py-1">Last4 {activeProfile.apiKeyLast4}</span>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="w-full max-w-md space-y-4">
-              <div className="space-y-2">
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>Used {activeProfile.creditsUsed.toLocaleString()}</span>
-                  <span>{usagePercent.toFixed(1)}%</span>
-                </div>
-                <div className="h-3 overflow-hidden rounded-full bg-muted">
-                  <motion.div
-                    className="h-full rounded-full bg-gradient-to-r from-orange-500 to-amber-400"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${usagePercent}%` }}
-                    transition={{ duration: 0.7, ease: "easeOut" }}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                {[
-                  { label: "Base Credits", value: activeProfile.baseCredits },
-                  { label: "Telegram Bonus", value: activeProfile.telegramBonus },
-                  { label: "Referral Bonus", value: activeProfile.referralBonus },
-                  { label: "Referral Count", value: activeProfile.referralCount },
-                ].map((item) => (
-                  <div key={item.label} className="rounded-xl bg-muted/60 p-3 text-center">
-                    <p className="text-lg font-bold">{item.value.toLocaleString()}</p>
-                    <p className="text-xs text-muted-foreground">{item.label}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-6 flex flex-wrap items-center gap-3 border-t pt-6">
-            <Button variant="outline" onClick={onRefreshProfile} disabled={isProfileLoading}>
-              <RefreshCw className={`h-4 w-4 ${isProfileLoading ? "animate-spin" : ""}`} />
-              {isProfileLoading ? "Refreshing..." : "Refresh session/profile"}
-            </Button>
-            <Button variant="outline" onClick={() => copyText(activeProfile.handle, "handle")}>
-              {copiedValue === "handle" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-              {copiedValue === "handle" ? "Copied handle" : "Copy X handle"}
-            </Button>
-            <Button variant="outline" onClick={() => copyText(activeProfile.twitterId, "twitterId")}>
-              {copiedValue === "twitterId" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-              {copiedValue === "twitterId" ? "Copied ID" : "Copy Twitter ID"}
-            </Button>
-            <Button variant="outline" onClick={() => copyText(activeProfile.avatar, "avatar")}>
-              {copiedValue === "avatar" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-              {copiedValue === "avatar" ? "Copied avatar URL" : "Copy avatar URL"}
-            </Button>
-            <Button variant="outline" onClick={() => copyText(activeProfile.profileUrl, "profileUrl")}>
-              {copiedValue === "profileUrl" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-              {copiedValue === "profileUrl" ? "Copied profile URL" : "Copy profile URL"}
-            </Button>
-          </div>
-
-          <div className="mt-6 grid gap-3 border-t pt-6 sm:grid-cols-2 xl:grid-cols-5">
-            {[
-              { label: "Twitter Name", value: activeProfile.name },
-              { label: "X Handle", value: activeProfile.handle },
-              { label: "Twitter ID", value: activeProfile.twitterId },
-              { label: "Avatar URL", value: activeProfile.avatar },
-              { label: "Profile URL", value: activeProfile.profileUrl },
-            ].map((item) => (
-              <div key={item.label} className="rounded-xl bg-muted/50 p-4">
-                <p className="text-xs text-muted-foreground">{item.label}</p>
-                {item.label === "Avatar URL" || item.label === "Profile URL" ? (
+          <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
+            <div className="rounded-3xl border border-primary/15 bg-gradient-to-br from-primary/10 via-background to-background p-5">
+              <div className="flex items-start gap-4">
+                <img
+                  src={activeProfile.avatar}
+                  alt={activeProfile.name}
+                  className="h-20 w-20 rounded-2xl border border-primary/20 object-cover shadow-[0_12px_30px_rgba(251,146,60,0.18)]"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    <ShieldCheck className="h-4 w-4 text-primary" />
+                    Developer Identity
+                  </p>
+                  <h1 className="mt-2 truncate text-2xl font-extrabold">{activeProfile.name}</h1>
                   <a
-                    href={item.value}
+                    href={activeProfile.profileUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="mt-1 block break-all text-sm font-medium text-primary underline-offset-4 hover:underline"
+                    className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline"
                   >
-                    {item.value}
+                    {activeProfile.handle}
+                    <ExternalLink className="h-3.5 w-3.5" />
                   </a>
-                ) : (
-                  <p className="mt-1 break-all text-sm font-medium">{item.value}</p>
-                )}
+                </div>
               </div>
-            ))}
+
+              <div className="mt-5 grid gap-3">
+                <div className="rounded-2xl border bg-background/80 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Twitter ID</p>
+                  <p className="mt-1 break-all text-sm font-semibold">{activeProfile.twitterId}</p>
+                </div>
+                <div className="rounded-2xl border bg-background/80 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">API access</p>
+                  <p className="mt-1 text-sm font-semibold">{apiKeyStatusText}</p>
+                </div>
+                <div className="rounded-2xl border bg-background/80 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Telegram</p>
+                  <p className="mt-1 text-sm font-semibold">
+                    {activeProfile.telegramConnected
+                      ? activeProfile.telegramUsername || "Connected"
+                      : "Not connected yet"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 flex flex-wrap gap-3">
+                <Button variant="outline" onClick={onRefreshProfile} disabled={isProfileLoading}>
+                  <RefreshCw className={`h-4 w-4 ${isProfileLoading ? "animate-spin" : ""}`} />
+                  {isProfileLoading ? "Refreshing..." : "Refresh"}
+                </Button>
+                <Button variant="outline" onClick={() => copyText(activeProfile.handle, "handle")}>
+                  {copiedValue === "handle" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  {copiedValue === "handle" ? "Copied handle" : "Copy Handle"}
+                </Button>
+                <Button variant="outline" onClick={() => copyText(activeProfile.twitterId, "twitterId")}>
+                  {copiedValue === "twitterId" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  {copiedValue === "twitterId" ? "Copied ID" : "Copy Twitter ID"}
+                </Button>
+                <Button variant="outline" asChild>
+                  <a href={activeProfile.profileUrl} target="_blank" rel="noreferrer">
+                    <ExternalLink className="h-4 w-4" />
+                    Open X Profile
+                  </a>
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div className="rounded-3xl border bg-background/70 p-6 lg:p-7">
+                <div className="flex flex-col gap-6 lg:gap-8">
+                  <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Credit Balance</p>
+                    <p className="mt-3 text-5xl font-extrabold leading-none md:text-6xl xl:text-7xl">
+                      {activeProfile.remainingCredits.toLocaleString()}
+                    </p>
+                    <p className="mt-3 max-w-md text-base text-muted-foreground">
+                      Remaining credits / {activeProfile.totalCredits.toLocaleString()} total allocated credits
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-2 text-sm text-muted-foreground">
+                      <span className="rounded-full border bg-background px-3 py-1">{activeProfile.statusLabel}</span>
+                      <span className="rounded-full border bg-background px-3 py-1">
+                        {activeProfile.hasActiveApiKey ? "API key active" : "API key pending"}
+                      </span>
+                      <span className="rounded-full border bg-background px-3 py-1">
+                        {activeProfile.telegramConnected ? "Telegram linked" : "Telegram not linked"}
+                      </span>
+                      {referralCodeValue ? <span className="rounded-full border bg-background px-3 py-1">Referral unlocked</span> : null}
+                    </div>
+                  </div>
+
+                    <div className="w-full max-w-lg space-y-4">
+                      <div className="space-y-2">
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>Used {activeProfile.creditsUsed.toLocaleString()}</span>
+                        <span>{usagePercent.toFixed(1)}%</span>
+                      </div>
+                      <div className="h-3 overflow-hidden rounded-full bg-muted">
+                        <motion.div
+                          className="h-full rounded-full bg-gradient-to-r from-orange-500 to-amber-400"
+                          initial={{ width: 0 }}
+                          animate={{ width: `${usagePercent}%` }}
+                          transition={{ duration: 0.7, ease: "easeOut" }}
+                        />
+                      </div>
+                    </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        {[
+                          { label: "Base Credits", value: activeProfile.baseCredits },
+                          { label: "Telegram Bonus", value: activeProfile.telegramBonus },
+                          { label: "Referral Bonus", value: activeProfile.referralBonus },
+                          { label: "Referral Count", value: activeProfile.referralCount },
+                        ].map((item) => (
+                          <div key={item.label} className="rounded-2xl border bg-muted/40 p-4">
+                            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{item.label}</p>
+                            <p className="mt-2 text-2xl font-extrabold">{item.value.toLocaleString()}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border bg-muted/30 p-5">
+                    <div className="flex items-center gap-2">
+                      <Link2 className="h-4 w-4 text-primary" />
+                      <p className="text-sm font-semibold">Referral Access</p>
+                    </div>
+
+                    {resolvedReferral?.isValid && inviterDisplay && !activeProfile.telegramConnected ? (
+                      <p className="mt-4 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-foreground">
+                        Invited by {inviterDisplay}. Link Telegram to apply this referral.
+                      </p>
+                    ) : null}
+
+                    <div className="mt-4 grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)]">
+                      <div className="rounded-2xl bg-background p-4">
+                        <p className="text-xs text-muted-foreground">Referral Code</p>
+                        <p className="mt-2 break-all text-sm font-semibold">
+                          {referralCodeValue || (activeProfile.telegramConnected ? "Waiting for backend response" : "Unlock after Telegram link")}
+                        </p>
+                      </div>
+
+                      <div className="rounded-2xl bg-background p-4">
+                        <p className="text-xs text-muted-foreground">Referral Link</p>
+                        <p className="mt-2 break-all text-sm font-semibold text-muted-foreground">
+                          {referralLink || (activeProfile.telegramConnected ? "Waiting for backend response" : "Link Telegram first to unlock your referral link")}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      {referralCodeValue ? (
+                        <Button variant="outline" size="sm" onClick={() => copyText(referralCodeValue, "referralCode")}>
+                          {copiedValue === "referralCode" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                          {copiedValue === "referralCode" ? "Copied code" : "Copy Referral Code"}
+                        </Button>
+                      ) : null}
+                      {referralLink ? (
+                        <Button variant="outline" size="sm" onClick={() => copyText(referralLink, "referralLink")}>
+                          {copiedValue === "referralLink" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                          {copiedValue === "referralLink" ? "Copied link" : "Copy Referral Link"}
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           {statusMessage ? (
@@ -417,38 +520,78 @@ const Dashboard = ({
                   <p className="mt-1 text-xs text-muted-foreground">Credits Earned</p>
                 </div>
               </div>
-
-              <div className="mt-4 space-y-3 rounded-xl bg-muted/40 p-4">
-                <div className="flex items-center gap-2">
-                  <Link2 className="h-4 w-4 text-primary" />
-                  <p className="text-sm font-medium">Referral Link</p>
-                </div>
-
-                {resolvedReferral?.isValid && inviterDisplay && !activeProfile.telegramConnected ? (
-                  <p className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-foreground">
-                    Invited by {inviterDisplay}. Link Telegram to apply this referral.
-                  </p>
-                ) : null}
-
-                {referralLink ? (
-                  <div className="space-y-3">
-                    <div className="rounded-xl bg-background px-4 py-3 text-sm">
-                      <p className="mt-1 break-all text-muted-foreground">{referralLink}</p>
-                    </div>
-                    <Button variant="outline" size="sm" onClick={() => copyText(referralLink, "referralLink")}>
-                      {copiedValue === "referralLink" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                      {copiedValue === "referralLink" ? "Copied link" : "Copy Referral Link"}
-                    </Button>
-                  </div>
-                ) : (
-                  <p className="rounded-xl bg-background px-4 py-3 text-sm text-muted-foreground">
-                    {activeProfile.telegramConnected ? "Waiting for the backend to return your referral link" : "Link Telegram first to unlock your referral link"}
-                  </p>
-                )}
-              </div>
+              <p className="mt-4 text-sm text-muted-foreground">
+                Track how many users joined from your referral link and how many bonus credits you have earned so far.
+              </p>
             </motion.section>
           </div>
         </div>
+
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.28 }}
+          className="rounded-2xl border bg-card p-6 shadow-card"
+        >
+          <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-3">
+              <Wallet className="h-5 w-5 text-primary" />
+              <div>
+                <h2 className="text-lg font-bold">Top Up API Credits</h2>
+                <p className="text-sm text-muted-foreground">Professional top-up cards inspired by modern API billing dashboards.</p>
+              </div>
+            </div>
+            <Button variant="outline" asChild>
+              <a href={SUPPORT_CONTACT_URL} target="_blank" rel="noreferrer">
+                <MessageCircleMore className="h-4 w-4" />
+                Contact Support
+              </a>
+            </Button>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-3">
+            {TOP_UP_PLANS.map((plan) => (
+              <div
+                key={plan.name}
+                className={`rounded-3xl border p-5 transition-all ${
+                  plan.highlighted
+                    ? "border-primary/30 bg-gradient-to-br from-primary/10 via-background to-background shadow-[0_16px_40px_rgba(251,146,60,0.12)]"
+                    : "bg-muted/30"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">{plan.name}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">{plan.description}</p>
+                  </div>
+                  {plan.highlighted ? (
+                    <span className="rounded-full bg-primary/15 px-3 py-1 text-xs font-semibold text-primary">Popular</span>
+                  ) : null}
+                </div>
+
+                <div className="mt-6">
+                  <p className="text-3xl font-extrabold">{plan.price}</p>
+                  <p className="mt-1 text-sm font-medium text-primary">{plan.credits}</p>
+                </div>
+
+                <div className="mt-5 space-y-2">
+                  {plan.features.map((feature: string) => (
+                    <div key={feature} className="flex items-start gap-2 text-sm text-muted-foreground">
+                      <Check className="mt-0.5 h-4 w-4 text-primary" />
+                      <span>{feature}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <Button className="mt-6 w-full" variant={plan.highlighted ? "default" : "outline"} asChild>
+                  <a href={plan.href} target="_blank" rel="noreferrer">
+                    {plan.actionLabel}
+                  </a>
+                </Button>
+              </div>
+            ))}
+          </div>
+        </motion.section>
 
         <motion.section
           initial={{ opacity: 0, y: 20 }}
