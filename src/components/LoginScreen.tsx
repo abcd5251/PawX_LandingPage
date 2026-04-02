@@ -1,6 +1,5 @@
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import PawIcon from "@/components/PawIcon";
 
 interface LoginScreenProps {
   onLogin: () => void;
@@ -31,7 +30,19 @@ const LoginScreen = ({ onLogin }: LoginScreenProps) => {
             delay: paw.delay,
           }}
         >
-          <PawIcon size={paw.size} />
+          <motion.img
+            src="/paw.png"
+            alt=""
+            style={{ width: paw.size, height: paw.size }}
+            className="object-contain"
+            animate={{ scale: [1, 1.08, 1] }}
+            transition={{
+              duration: 4,
+              repeat: Number.POSITIVE_INFINITY,
+              ease: "easeInOut",
+              delay: paw.delay,
+            }}
+          />
         </motion.div>
       ))}
 
@@ -42,7 +53,12 @@ const LoginScreen = ({ onLogin }: LoginScreenProps) => {
         className="flex flex-col items-center gap-8 z-10"
       >
         <div className="flex items-center gap-3">
-          <PawIcon size={56} />
+          <motion.img
+            src="/paw.png"
+            alt="paw"
+            className="w-16 h-16 object-contain"
+            whileHover={{ filter: "brightness(1.1) saturate(0.8) hue-rotate(-10deg)", scale: 1.1 }}
+          />
           <span className="text-5xl md:text-6xl font-extrabold tracking-tight text-foreground">
             Paw<span className="text-primary">X</span> AI
           </span>
