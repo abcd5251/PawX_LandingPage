@@ -73,6 +73,52 @@ export interface ReferralCodeResolution {
   message: string;
 }
 
+export type PaymentPlanId = "Starter" | "Standard" | "Advanced";
+export type PaymentSessionStatus = "pending" | "success" | "expired";
+
+export interface PaymentTokenOut {
+  chainId: string;
+  address: string;
+}
+
+export interface CreatePaymentSessionRequest {
+  planId: PaymentPlanId;
+  tokenOut: PaymentTokenOut;
+  redirectUrl?: string;
+}
+
+export interface PaymentSessionPlan {
+  id: PaymentPlanId;
+  amount: number;
+  credits: number;
+}
+
+export interface PaymentSession {
+  id: string;
+  customOrderId: string;
+  plan: PaymentSessionPlan;
+  amount: number;
+  checkoutUrl: string;
+  qrCodeValue: string;
+  identifierInUsd: string;
+  status: PaymentSessionStatus;
+  paid: boolean;
+  createdAt: string;
+  expiresAt: string;
+  paidAt: string | null;
+  telegramId: string;
+  twitterId: string;
+  creditsToAdd: number;
+  redirectUrl: string;
+  providerPrice: number;
+  providerOriginalPrice: number;
+}
+
+export interface PaymentSessionStatusResult {
+  id: string;
+  status: PaymentSessionStatus;
+}
+
 export type UsageRange = "7d" | "30d";
 
 export interface ApiUsageDay {
@@ -205,6 +251,7 @@ const readBoolean = (source: unknown, paths: string[][], fallback = false) => {
 
 const trimTrailingSlash = (value: string) => value.replace(/\/+$/, "");
 const trimEnvValue = (value?: string) => value?.trim() || "";
+const unwrapData = (payload: unknown) => readPath(payload, ["data"]) ?? payload;
 
 const normalizeHandle = (value: string, twitterId: string) => {
   if (!value) {
@@ -330,6 +377,13 @@ const readApiKeyLast4 = (payload: unknown, apiKeyPreview: string, fullApiKey = "
 export const getApiBaseUrl = () => {
   const configured = trimEnvValue(import.meta.env.VITE_PAWX_API_BASE_URL) || trimEnvValue(import.meta.env.VITE_API_BASE_URL);
   return trimTrailingSlash(configured || DEFAULT_API_BASE_URL);
+};
+
+export const getAppBaseUrl = () => trimTrailingSlash(trimEnvValue(import.meta.env.VITE_PAWX_APP_URL));
+export const getPaymentReturnUrl = () => {
+  const configuredAppUrl = getAppBaseUrl();
+  const origin = configuredAppUrl || (typeof window === "undefined" ? "" : window.location.origin);
+  return origin ? `${origin}/payment/result` : "/payment/result";
 };
 
 export const getTelegramBotUsername = () => trimEnvValue(import.meta.env.VITE_TELEGRAM_BOT_USERNAME);
@@ -592,9 +646,69 @@ const buildReferralLink = (referralCode: string, explicitReferralLink = "") => {
     return "";
   }
 
-  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const configuredAppUrl = getAppBaseUrl();
+  const origin = configuredAppUrl || (typeof window === "undefined" ? "" : window.location.origin);
   const path = `/?ref=${encodeURIComponent(referralCode)}`;
   return origin ? `${origin}${path}` : path;
+};
+
+const normalizePaymentPlanId = (value: string): PaymentPlanId => {
+  if (value === "Standard" || value === "Advanced") {
+    return value;
+  }
+
+  return "Starter";
+};
+
+const normalizePaymentSessionStatus = (value: string): PaymentSessionStatus => {
+  if (value === "success" || value === "expired") {
+    return value;
+  }
+
+  return "pending";
+};
+
+export const toPaymentSession = (payload: unknown): PaymentSession => {
+  const data = unwrapData(payload);
+  const planPayload = readPath(data, ["plan"]);
+  const planId = normalizePaymentPlanId(readString(planPayload, [["id"], ["planId"]], readString(data, [["planId"]], "Starter")));
+  const amount = readNumber(data, [["amount"]], readNumber(planPayload, [["amount"]], 0));
+  const creditsToAdd = readNumber(data, [["creditsToAdd"]], readNumber(planPayload, [["credits"]], 0));
+  const status = normalizePaymentSessionStatus(readString(data, [["status"], ["invoiceStatus"], ["paymentStatus"]], "pending"));
+
+  return {
+    id: readString(data, [["id"], ["sessionId"], ["customOrderId"]]),
+    customOrderId: readString(data, [["customOrderId"], ["id"], ["sessionId"]]),
+    plan: {
+      id: planId,
+      amount: readNumber(planPayload, [["amount"]], amount),
+      credits: readNumber(planPayload, [["credits"]], creditsToAdd),
+    },
+    amount,
+    checkoutUrl: readString(data, [["checkoutUrl"], ["url"], ["paymentUrl"]]),
+    qrCodeValue: readString(data, [["qrCodeValue"], ["qrCode"], ["checkoutUrl"]]),
+    identifierInUsd: readString(data, [["identifierInUsd"], ["identifier"], ["invoiceIdentifier"]]),
+    status,
+    paid: readBoolean(data, [["paid"]], status === "success"),
+    createdAt: readString(data, [["createdAt"]]),
+    expiresAt: readString(data, [["expiresAt"]]),
+    paidAt: readString(data, [["paidAt"]]) || null,
+    telegramId: readString(data, [["telegramId"]]),
+    twitterId: readString(data, [["twitterId"]]),
+    creditsToAdd,
+    redirectUrl: readString(data, [["redirectUrl"]]),
+    providerPrice: readNumber(data, [["providerPrice"]], amount),
+    providerOriginalPrice: readNumber(data, [["providerOriginalPrice"]], amount),
+  };
+};
+
+export const toPaymentSessionStatusResult = (payload: unknown): PaymentSessionStatusResult => {
+  const data = unwrapData(payload);
+
+  return {
+    id: readString(data, [["id"], ["sessionId"]]),
+    status: normalizePaymentSessionStatus(readString(data, [["status"], ["invoiceStatus"], ["paymentStatus"]], "pending")),
+  };
 };
 
 const readReferralCode = (payload: unknown, fallback = "") =>
@@ -886,6 +1000,26 @@ export const bindTelegram = async (payload: BindTelegramRequest) => {
     method: "POST",
     body: JSON.stringify(payload),
   });
+};
+
+export const createPaymentSession = async (request: CreatePaymentSessionRequest) => {
+  const payload = await apiRequest<unknown>("/api/v1/payments/sessions", {
+    method: "POST",
+    body: JSON.stringify({
+      ...request,
+      redirectUrl: request.redirectUrl || getPaymentReturnUrl(),
+    }),
+  });
+
+  return toPaymentSession(payload);
+};
+
+export const fetchPaymentSessionStatus = async (sessionId: string) => {
+  const payload = await apiRequest<unknown>(`/api/v1/payments/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "GET",
+  });
+
+  return toPaymentSessionStatusResult(payload);
 };
 
 export const callProtectedApi = async (path: string, apiKey: string): Promise<ProtectedApiResult> => {

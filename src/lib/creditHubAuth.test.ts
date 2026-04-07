@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearStoredReferralCode,
+  getAppBaseUrl,
   getStoredReferralCode,
   getApiBaseUrl,
+  getPaymentReturnUrl,
   getXAuthorizationUrl,
   normalizeUsageRange,
   persistReferralCodeFromUrl,
+  toPaymentSession,
+  toPaymentSessionStatusResult,
   toReferralCodeResolution,
   toReferralProfile,
   toApiKeyProfile,
@@ -49,6 +53,18 @@ describe("creditHubAuth", () => {
     vi.stubEnv("VITE_PAWX_API_BASE_URL", " http://localhost:3001/ ");
 
     expect(getApiBaseUrl()).toBe("http://localhost:3001");
+  });
+
+  it("trims whitespace around the configured app url", () => {
+    vi.stubEnv("VITE_PAWX_APP_URL", " https://pawx.example.com/ ");
+
+    expect(getAppBaseUrl()).toBe("https://pawx.example.com");
+  });
+
+  it("builds the payment return url from the configured app url", () => {
+    vi.stubEnv("VITE_PAWX_APP_URL", " https://pawx.example.com/ ");
+
+    expect(getPaymentReturnUrl()).toBe("https://pawx.example.com/payment/result");
   });
 
   it("maps nested session payloads into the authenticated X user", () => {
@@ -279,6 +295,78 @@ describe("creditHubAuth", () => {
     });
   });
 
+  it("maps payment session payloads returned from create session", () => {
+    const paymentSession = toPaymentSession({
+      code: 201,
+      message: "Payment session created",
+      data: {
+        id: "session-uuid",
+        customOrderId: "session-uuid",
+        plan: {
+          id: "Starter",
+          amount: 2,
+          credits: 1000,
+        },
+        amount: 2,
+        checkoutUrl: "https://checkout.kira-pay.com/abc123xyz7",
+        qrCodeValue: "https://checkout.kira-pay.com/abc123xyz7",
+        identifierInUsd: "abc123xyz7",
+        status: "pending",
+        paid: false,
+        createdAt: "2026-04-07T00:00:00.000Z",
+        expiresAt: "2026-04-07T00:30:00.000Z",
+        paidAt: null,
+        telegramId: "tg-123",
+        twitterId: "x-123",
+        creditsToAdd: 1000,
+        redirectUrl: "https://pawx.example.com/payment/result?sessionId=session-uuid",
+        providerPrice: 2,
+        providerOriginalPrice: 2,
+      },
+    });
+
+    expect(paymentSession).toEqual({
+      id: "session-uuid",
+      customOrderId: "session-uuid",
+      plan: {
+        id: "Starter",
+        amount: 2,
+        credits: 1000,
+      },
+      amount: 2,
+      checkoutUrl: "https://checkout.kira-pay.com/abc123xyz7",
+      qrCodeValue: "https://checkout.kira-pay.com/abc123xyz7",
+      identifierInUsd: "abc123xyz7",
+      status: "pending",
+      paid: false,
+      createdAt: "2026-04-07T00:00:00.000Z",
+      expiresAt: "2026-04-07T00:30:00.000Z",
+      paidAt: null,
+      telegramId: "tg-123",
+      twitterId: "x-123",
+      creditsToAdd: 1000,
+      redirectUrl: "https://pawx.example.com/payment/result?sessionId=session-uuid",
+      providerPrice: 2,
+      providerOriginalPrice: 2,
+    });
+  });
+
+  it("maps payment status payloads returned from fetch session", () => {
+    const paymentStatus = toPaymentSessionStatusResult({
+      code: 200,
+      message: "Payment session fetched",
+      data: {
+        id: "session-uuid",
+        status: "success",
+      },
+    });
+
+    expect(paymentStatus).toEqual({
+      id: "session-uuid",
+      status: "success",
+    });
+  });
+
   it("stores and clears referral codes from the url", () => {
     expect(persistReferralCodeFromUrl("?ref=ABC123")).toBe("ABC123");
     expect(getStoredReferralCode()).toBe("ABC123");
@@ -289,6 +377,8 @@ describe("creditHubAuth", () => {
   });
 
   it("maps dedicated referral profile payloads", () => {
+    vi.stubEnv("VITE_PAWX_APP_URL", "https://pawx.example.com/");
+
     const referralProfile = toReferralProfile({
       referralCode: "ABC123",
       stats: {
@@ -299,7 +389,7 @@ describe("creditHubAuth", () => {
     });
 
     expect(referralProfile.referralCode).toBe("ABC123");
-    expect(referralProfile.referralLink).toContain("?ref=ABC123");
+    expect(referralProfile.referralLink).toBe("https://pawx.example.com/?ref=ABC123");
     expect(referralProfile.peopleReferred).toBe(7);
     expect(referralProfile.creditsEarned).toBe(3500);
     expect(referralProfile.referrals).toHaveLength(1);

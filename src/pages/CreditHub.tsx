@@ -9,8 +9,10 @@ import {
   buildFallbackProfile,
   clearStoredReferralCode,
   createApiKey,
+  createPaymentSession,
   CreditHubApiError,
   fetchApiKeyProfile,
+  fetchPaymentSessionStatus,
   fetchReferralProfile,
   fetchApiUsage,
   fetchXSession,
@@ -23,6 +25,10 @@ import {
   resolveReferralCode,
   type ApiKeyProfile,
   type ApiUsageSeries,
+  type PaymentPlanId,
+  type PaymentSession,
+  type PaymentSessionStatusResult,
+  type PaymentTokenOut,
   type ReferralCodeResolution,
   type ReferralProfile,
   type TelegramAuthPayload,
@@ -80,6 +86,14 @@ const getReadableUsageError = (error: unknown, range: UsageRange) => {
   return getReadableAuthError(error);
 };
 
+const getReadablePaymentError = (error: unknown, telegramConnected: boolean) => {
+  if (error instanceof CreditHubApiError && error.status === 403 && !telegramConnected) {
+    return "Payments require a Telegram-linked account before a KiraPay session can be created.";
+  }
+
+  return getReadableAuthError(error);
+};
+
 const CreditHub = () => {
   const [sessionUser, setSessionUser] = useState<XSessionUser | null>(null);
   const [profile, setProfile] = useState<ApiKeyProfile | null>(null);
@@ -100,10 +114,16 @@ const CreditHub = () => {
   const [usageError, setUsageError] = useState("");
   const [isUsageLoading, setIsUsageLoading] = useState(false);
   const [isTelegramWidgetReady, setIsTelegramWidgetReady] = useState(false);
+  const [paymentSession, setPaymentSession] = useState<PaymentSession | null>(null);
+  const [paymentStatus, setPaymentStatus] = useState<PaymentSessionStatusResult | null>(null);
+  const [isCreatingPayment, setIsCreatingPayment] = useState(false);
+  const [isCheckingPaymentStatus, setIsCheckingPaymentStatus] = useState(false);
+  const [activePaymentPlanId, setActivePaymentPlanId] = useState<PaymentPlanId | null>(null);
   const telegramWidgetContainerRef = useRef<HTMLDivElement | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const isAuthCallback = location.pathname === "/credit-hub/auth/callback";
+  const isPaymentResultRoute = location.pathname === "/payment/result" || location.pathname === "/credit-hub/payment/result";
   const telegramBotUsername = getTelegramBotUsername();
 
   const loadProfileForUser = useCallback(async (user: XSessionUser) => {
@@ -283,6 +303,59 @@ const CreditHub = () => {
     }
   }, [loadProfileForUser, loadReferralProfile, loadUsage, sessionUser, usageRange]);
 
+  const handleCheckPaymentStatus = useCallback(
+    async (sessionId: string, options?: { clearQuery?: boolean; silent?: boolean }) => {
+      if (!sessionUser) {
+        return null;
+      }
+
+      setIsCheckingPaymentStatus(true);
+      setAuthError("");
+
+      if (!options?.silent) {
+        setStatusMessage("Checking the latest KiraPay payment status...");
+      }
+
+      try {
+        const nextPaymentStatus = await fetchPaymentSessionStatus(sessionId);
+        setPaymentStatus(nextPaymentStatus);
+        setPaymentSession((currentSession) =>
+          currentSession && currentSession.id === nextPaymentStatus.id
+            ? {
+                ...currentSession,
+                status: nextPaymentStatus.status,
+                paid: nextPaymentStatus.status === "success",
+                paidAt: nextPaymentStatus.status === "success" && !currentSession.paidAt ? new Date().toISOString() : currentSession.paidAt,
+              }
+            : currentSession,
+        );
+
+        if (nextPaymentStatus.status === "success") {
+          await refreshProfile();
+          setStatusMessage("Payment completed successfully. Credits and account balances were refreshed.");
+        } else if (nextPaymentStatus.status === "expired") {
+          setStatusMessage("");
+          setAuthError("This payment session has expired. Please create a new session and try again.");
+        } else {
+          setStatusMessage("Payment session is still pending. Complete the checkout, then refresh the payment status.");
+        }
+
+        if (options?.clearQuery) {
+          navigate("/credit-hub", { replace: true });
+        }
+
+        return nextPaymentStatus;
+      } catch (error) {
+        setStatusMessage("");
+        setAuthError(getReadableAuthError(error));
+        return null;
+      } finally {
+        setIsCheckingPaymentStatus(false);
+      }
+    },
+    [navigate, refreshProfile, sessionUser],
+  );
+
   const handleTwitterLogin = () => {
     setAuthError("");
     setStatusMessage("");
@@ -327,6 +400,42 @@ const CreditHub = () => {
       }
     },
     [loadProfileForUser, sessionUser],
+  );
+
+  const handleCreatePayment = useCallback(
+    async (planId: PaymentPlanId, tokenOut: PaymentTokenOut) => {
+      if (!sessionUser) {
+        return;
+      }
+
+      const telegramConnected = profile?.telegramConnected ?? false;
+
+      setAuthError("");
+      setStatusMessage("");
+
+      if (!telegramConnected) {
+        setAuthError("Link Telegram before creating a KiraPay payment session.");
+        return;
+      }
+
+      setIsCreatingPayment(true);
+      setActivePaymentPlanId(planId);
+
+      try {
+        const nextPaymentSession = await createPaymentSession({ planId, tokenOut });
+        setPaymentSession(nextPaymentSession);
+        setPaymentStatus({ id: nextPaymentSession.id, status: nextPaymentSession.status });
+        setStatusMessage(`Payment session created for ${planId}. Redirecting to the KiraPay checkout now...`);
+        window.location.assign(nextPaymentSession.checkoutUrl);
+      } catch (error) {
+        setStatusMessage("");
+        setAuthError(getReadablePaymentError(error, telegramConnected));
+      } finally {
+        setIsCreatingPayment(false);
+        setActivePaymentPlanId(null);
+      }
+    },
+    [profile?.telegramConnected, sessionUser],
   );
 
   const handleBindTelegramAuth = useCallback(
@@ -488,6 +597,8 @@ const CreditHub = () => {
       setLatestApiKey("");
       setReferralProfile(null);
       setResolvedReferral(null);
+      setPaymentSession(null);
+      setPaymentStatus(null);
       setUsageRange("7d");
       setUsage(buildEmptyApiUsage("7d"));
       setUsageError("");
@@ -497,6 +608,20 @@ const CreditHub = () => {
       setIsLoggingOut(false);
     }
   }, []);
+
+  useEffect(() => {
+    const sessionId = new URLSearchParams(location.search).get("sessionId")?.trim();
+
+    if (!sessionId || !sessionUser) {
+      return;
+    }
+
+    if (!isPaymentResultRoute && location.pathname !== "/credit-hub") {
+      return;
+    }
+
+    void handleCheckPaymentStatus(sessionId, { clearQuery: true, silent: false });
+  }, [handleCheckPaymentStatus, isPaymentResultRoute, location.pathname, location.search, sessionUser]);
 
   if (!sessionUser) {
     return (
@@ -528,6 +653,11 @@ const CreditHub = () => {
       isLoggingOut={isLoggingOut}
       isUsageLoading={isUsageLoading}
       isTelegramWidgetReady={isTelegramWidgetReady}
+      paymentSession={paymentSession}
+      paymentStatus={paymentStatus}
+      isCreatingPayment={isCreatingPayment}
+      activePaymentPlanId={activePaymentPlanId}
+      isCheckingPaymentStatus={isCheckingPaymentStatus}
       telegramWidgetContent={
         !profile?.telegramConnected ? (
           <div
@@ -548,6 +678,12 @@ const CreditHub = () => {
       }}
       onBindTelegram={() => {
         void handleBindTelegram();
+      }}
+      onCreatePayment={(planId, tokenOut) => {
+        void handleCreatePayment(planId, tokenOut);
+      }}
+      onCheckPaymentStatus={(sessionId) => {
+        void handleCheckPaymentStatus(sessionId);
       }}
       onLogout={() => {
         void handleLogout();

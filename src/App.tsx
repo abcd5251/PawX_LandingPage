@@ -19,6 +19,8 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/credit-hub" element={<CreditHub />} />
           <Route path="/credit-hub/auth/callback" element={<CreditHub />} />
+          <Route path="/credit-hub/payment/result" element={<CreditHub />} />
+          <Route path="/payment/result" element={<CreditHub />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

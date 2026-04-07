@@ -3,6 +3,7 @@
 interface ImportMetaEnv {
   readonly VITE_API_BASE_URL?: string;
   readonly VITE_PAWX_API_BASE_URL?: string;
+  readonly VITE_PAWX_APP_URL?: string;
   readonly VITE_TELEGRAM_BOT_USERNAME?: string;
 }
 

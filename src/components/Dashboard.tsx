@@ -4,7 +4,18 @@ import { type ReactNode, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import PawIcon from "@/components/PawIcon";
 import { Button } from "@/components/ui/button";
-import type { ApiKeyProfile, ApiUsageSeries, ReferralCodeResolution, ReferralProfile, UsageRange, XSessionUser } from "@/lib/creditHubAuth";
+import type {
+  ApiKeyProfile,
+  ApiUsageSeries,
+  PaymentPlanId,
+  PaymentSession,
+  PaymentSessionStatusResult,
+  PaymentTokenOut,
+  ReferralCodeResolution,
+  ReferralProfile,
+  UsageRange,
+  XSessionUser,
+} from "@/lib/creditHubAuth";
 
 interface DashboardProps {
   sessionUser: XSessionUser;
@@ -24,48 +35,84 @@ interface DashboardProps {
   isLoggingOut: boolean;
   isUsageLoading: boolean;
   isTelegramWidgetReady: boolean;
+  paymentSession: PaymentSession | null;
+  paymentStatus: PaymentSessionStatusResult | null;
+  isCreatingPayment: boolean;
+  activePaymentPlanId: PaymentPlanId | null;
+  isCheckingPaymentStatus: boolean;
   telegramWidgetContent: ReactNode;
   onRefreshProfile: () => void;
   onUsageRangeChange: (value: UsageRange) => void;
   onCreateApiKey: () => void;
   onRotateApiKey: () => void;
   onBindTelegram: () => void;
+  onCreatePayment: (planId: PaymentPlanId, tokenOut: PaymentTokenOut) => void;
+  onCheckPaymentStatus: (sessionId: string) => void;
   onLogout: () => void;
 }
 
 const SUPPORT_CONTACT_URL = "https://t.me/pawx_ai";
 const TOP_UP_PLANS = [
   {
-    name: "Builder Pack",
-    price: "20 USDC",
+    id: "Starter",
+    name: "Starter Pack",
+    price: "2 USDC",
     credits: "1,600 Credits",
-    description: "Best for trying the API with a practical starter balance.",
-    features: ["Top up once", "Manual activation support", "Good for testing and small workloads"],
-    href: SUPPORT_CONTACT_URL,
-    actionLabel: "Top Up 20 USDC",
+    description: "A compact top-up for testing flows and light API usage.",
+    features: ["USDC payment", "Fast credit activation", "Good for personal testing"],
+    actionLabel: "Top Up 2 USDC",
     highlighted: false,
   },
   {
-    name: "Growth Pack",
-    price: "100 USDC",
-    credits: "10,000 Credits",
-    description: "Higher volume credits for active builders and internal tools.",
-    features: ["Better effective rate", "Ideal for production usage", "Priority manual confirmation"],
-    href: SUPPORT_CONTACT_URL,
-    actionLabel: "Top Up 100 USDC",
+    id: "Standard",
+    name: "Standard Pack",
+    price: "4 USDC",
+    credits: "1,800 Credits",
+    description: "Balanced top-up for recurring development and integration work.",
+    features: ["USDC payment", "Extra credits boost", "Better for repeated usage"],
+    actionLabel: "Top Up 4 USDC",
     highlighted: true,
   },
   {
-    name: "Custom Plan",
-    price: "Flexible",
-    credits: "Custom Credits",
-    description: "For larger monthly usage, team access, or bespoke enterprise needs.",
-    features: ["Custom credit size", "Tailored commercial plan", "Direct contact with the team"],
-    href: SUPPORT_CONTACT_URL,
-    actionLabel: "Contact Us",
+    id: "Advanced",
+    name: "Advanced Pack",
+    price: "6 USDC",
+    credits: "2,000 Credits",
+    description: "The highest credit bundle in this quick top-up set.",
+    features: ["USDC payment", "Best value in this block", "Suitable for heavier testing"],
+    actionLabel: "Top Up 6 USDC",
     highlighted: false,
   },
+] as const satisfies ReadonlyArray<{
+  id: PaymentPlanId;
+  name: string;
+  price: string;
+  credits: string;
+  description: string;
+  features: readonly string[];
+  actionLabel: string;
+  highlighted: boolean;
+}>;
+
+const PAYMENT_TOKEN_OPTIONS = [
+  {
+    id: "base-usdc",
+    label: "Base USDC",
+    chainLabel: "Base · Chain ID 8453",
+    symbol: "USDC",
+    chainId: "8453",
+    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    description: "Official USDC on Base, ready for the current KiraPay checkout flow.",
+  },
 ] as const;
+
+const CUSTOM_PLAN = {
+  title: "Custom Plan",
+  description: "For larger monthly usage, team access, or bespoke enterprise needs.",
+  label: "Flexible",
+  actionLabel: "Contact on Telegram",
+  href: SUPPORT_CONTACT_URL,
+} as const;
 
 const Dashboard = ({
   sessionUser,
@@ -85,15 +132,23 @@ const Dashboard = ({
   isLoggingOut,
   isUsageLoading,
   isTelegramWidgetReady,
+  paymentSession,
+  paymentStatus,
+  isCreatingPayment,
+  activePaymentPlanId,
+  isCheckingPaymentStatus,
   telegramWidgetContent,
   onRefreshProfile,
   onUsageRangeChange,
   onCreateApiKey,
   onRotateApiKey,
   onBindTelegram,
+  onCreatePayment,
+  onCheckPaymentStatus,
   onLogout,
 }: DashboardProps) => {
   const [copiedValue, setCopiedValue] = useState<"" | "key" | "handle" | "twitterId" | "referralCode" | "referralLink">("");
+  const [selectedPaymentTokenId, setSelectedPaymentTokenId] = useState<(typeof PAYMENT_TOKEN_OPTIONS)[number]["id"]>(PAYMENT_TOKEN_OPTIONS[0].id);
 
   const activeProfile = profile ?? {
     ...sessionUser,
@@ -151,6 +206,25 @@ const Dashboard = ({
 
     return usage.totalCreditsUsed / usage.days.length;
   }, [usage.days.length, usage.totalCreditsUsed]);
+
+  const selectedPaymentToken = useMemo(
+    () => PAYMENT_TOKEN_OPTIONS.find((option) => option.id === selectedPaymentTokenId) ?? PAYMENT_TOKEN_OPTIONS[0],
+    [selectedPaymentTokenId],
+  );
+  const activePaymentSessionId = paymentStatus?.id || paymentSession?.id || "";
+  const activePaymentState = paymentStatus?.status || paymentSession?.status || null;
+  const activePaymentCheckoutUrl = paymentSession?.checkoutUrl || "";
+  const activePaymentExpiresAt = paymentSession?.expiresAt || "";
+  const activePaymentPlan = paymentSession?.plan;
+  const paymentStatusTone =
+    activePaymentState === "success"
+      ? "border-emerald-300/60 bg-emerald-50 text-emerald-700"
+      : activePaymentState === "expired"
+        ? "border-destructive/30 bg-destructive/10 text-destructive"
+        : "border-amber-300/60 bg-amber-50 text-amber-700";
+  const paymentStatusLabel =
+    activePaymentState === "success" ? "Paid" : activePaymentState === "expired" ? "Expired" : activePaymentState === "pending" ? "Pending" : "";
+  const formattedPaymentExpiry = activePaymentExpiresAt ? new Date(activePaymentExpiresAt).toLocaleString() : "";
 
   const copyText = async (
     value: string,
@@ -549,6 +623,96 @@ const Dashboard = ({
             </Button>
           </div>
 
+          <div className="mb-5 rounded-3xl border bg-muted/30 p-5 md:p-6">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-2xl">
+                <p className="text-sm font-semibold">Settlement Token</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Select which USDC network the KiraPay checkout should use. The backend validates the final tokenOut payload before creating the payment session.
+                </p>
+              </div>
+              {!activeProfile.telegramConnected ? (
+                <div className="rounded-2xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                  Link Telegram first. The payment API blocks accounts that have not finished Telegram binding.
+                </div>
+              ) : null}
+            </div>
+
+            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+              {PAYMENT_TOKEN_OPTIONS.map((option) => {
+                const isSelected = option.id === selectedPaymentToken.id;
+
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setSelectedPaymentTokenId(option.id)}
+                    className={`rounded-2xl border p-4 text-left transition-all ${
+                      isSelected
+                        ? "border-primary/40 bg-primary/10 shadow-[0_14px_30px_rgba(251,146,60,0.12)]"
+                        : "border-border bg-background hover:border-primary/20"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold">{option.label}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{option.chainLabel}</p>
+                      </div>
+                      <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">{option.symbol}</span>
+                    </div>
+                    <p className="mt-3 text-sm text-muted-foreground">{option.description}</p>
+                    <p className="mt-3 break-all text-xs text-muted-foreground">{option.address}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {activePaymentSessionId ? (
+            <div className="mb-5 rounded-3xl border bg-background/70 p-5 md:p-6">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <p className="text-base font-bold">Latest Payment Session</p>
+                    {paymentStatusLabel ? (
+                      <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${paymentStatusTone}`}>{paymentStatusLabel}</span>
+                    ) : null}
+                  </div>
+                  <p className="mt-2 break-all text-sm text-muted-foreground">{activePaymentSessionId}</p>
+                  {activePaymentPlan ? (
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      {activePaymentPlan.id} · {activePaymentPlan.amount} USD · {activePaymentPlan.credits.toLocaleString()} credits
+                    </p>
+                  ) : null}
+                  {formattedPaymentExpiry ? (
+                    <p className="mt-2 text-sm text-muted-foreground">Expires at {formattedPaymentExpiry}</p>
+                  ) : null}
+                  {activePaymentState === "success" ? (
+                    <p className="mt-2 text-sm text-emerald-700">Credits are applied by webhook. If the balance looks stale, refresh the payment status once more.</p>
+                  ) : null}
+                  {activePaymentState === "pending" ? (
+                    <p className="mt-2 text-sm text-amber-700">Checkout is still open. Complete the KiraPay payment, then refresh this session status.</p>
+                  ) : null}
+                </div>
+
+                <div className="flex flex-col gap-3 sm:flex-row lg:flex-col">
+                  {activePaymentCheckoutUrl ? (
+                    <Button variant="outline" asChild>
+                      <a href={activePaymentCheckoutUrl} target="_blank" rel="noreferrer">
+                        <ExternalLink className="h-4 w-4" />
+                        Continue Checkout
+                      </a>
+                    </Button>
+                  ) : null}
+                  <Button onClick={() => onCheckPaymentStatus(activePaymentSessionId)} disabled={isCheckingPaymentStatus}>
+                    <RefreshCw className={`h-4 w-4 ${isCheckingPaymentStatus ? "animate-spin" : ""}`} />
+                    {isCheckingPaymentStatus ? "Refreshing..." : "Refresh Status"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           <div className="grid gap-4 xl:grid-cols-3">
             {TOP_UP_PLANS.map((plan) => (
               <div
@@ -583,13 +747,39 @@ const Dashboard = ({
                   ))}
                 </div>
 
-                <Button className="mt-6 w-full" variant={plan.highlighted ? "default" : "outline"} asChild>
-                  <a href={plan.href} target="_blank" rel="noreferrer">
-                    {plan.actionLabel}
-                  </a>
+                <Button
+                  className="mt-6 w-full"
+                  variant={plan.highlighted ? "default" : "outline"}
+                  onClick={() =>
+                    onCreatePayment(plan.id, {
+                      chainId: selectedPaymentToken.chainId,
+                      address: selectedPaymentToken.address,
+                    })
+                  }
+                  disabled={isCreatingPayment || !activeProfile.telegramConnected}
+                >
+                  {isCreatingPayment && activePaymentPlanId === plan.id ? "Creating Session..." : plan.actionLabel}
                 </Button>
               </div>
             ))}
+          </div>
+
+          <div className="mt-5 rounded-3xl border bg-muted/30 p-5 md:p-6">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="max-w-2xl">
+                <div className="flex items-center gap-3">
+                  <p className="text-base font-bold">{CUSTOM_PLAN.title}</p>
+                  <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">{CUSTOM_PLAN.label}</span>
+                </div>
+                <p className="mt-2 text-sm text-muted-foreground">{CUSTOM_PLAN.description}</p>
+              </div>
+              <Button variant="outline" asChild>
+                <a href={CUSTOM_PLAN.href} target="_blank" rel="noreferrer">
+                  <MessageCircleMore className="h-4 w-4" />
+                  {CUSTOM_PLAN.actionLabel}
+                </a>
+              </Button>
+            </div>
           </div>
         </motion.section>
 
