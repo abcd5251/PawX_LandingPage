@@ -198,6 +198,29 @@ const getHistorySourceTone = (value: string) => {
 
 const formatSignedCredits = (value: number) => `${value > 0 ? "+" : ""}${value.toLocaleString()}`;
 
+const formatUsdAmount = (value: string) => {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return "$0.00";
+  }
+
+  return parsed.toLocaleString(undefined, {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+};
+
+const formatTelegramUsername = (value: string) => {
+  if (!value) {
+    return "";
+  }
+
+  return value.startsWith("@") ? value : `@${value}`;
+};
+
 const Dashboard = ({
   sessionUser,
   profile,
@@ -290,12 +313,20 @@ const Dashboard = ({
   }, [activeProfile.referralCode, referralProfile?.referralCode, referralProfile?.referralLink]);
 
   const peopleReferred = referralProfile?.peopleReferred ?? activeProfile.referralCount;
+  const paidReferrals = referralProfile?.stats.paidReferrals ?? referralProfile?.paidReferrals ?? 0;
+  const referralPaymentCount = referralProfile?.stats.referralPaymentCount ?? referralProfile?.referralPaymentCount ?? 0;
   const creditsEarned = referralProfile?.creditsEarned ?? activeProfile.referralBonus;
+  const claimableAmountUsd = referralProfile?.stats.claimableAmountUsd ?? referralProfile?.claimableAmountUsd ?? "0";
+  const referralItems = referralProfile?.referrals ?? [];
   const inviterDisplay = resolvedReferral?.inviterHandle || resolvedReferral?.inviterName;
   const referralCodeValue = referralProfile?.referralCode || activeProfile.referralCode;
   const apiKeyStatusText = activeProfile.hasActiveApiKey
     ? `Active key available${activeProfile.apiKeyLast4 ? ` · ${activeProfile.apiKeyLast4}` : activeProfile.apiKeyPreview ? ` · ${activeProfile.apiKeyPreview}` : ""}`
     : "No API key created";
+  const paidReferralRate = peopleReferred > 0 ? (paidReferrals / peopleReferred) * 100 : 0;
+  const claimableAmountNumber = Number(claimableAmountUsd);
+  const averageClaimablePerPayment =
+    referralPaymentCount > 0 && Number.isFinite(claimableAmountNumber) ? claimableAmountNumber / referralPaymentCount : 0;
 
   const averageDailyUsage = useMemo(() => {
     if (!usage.days.length) {
@@ -615,7 +646,7 @@ const Dashboard = ({
           ) : null}
         </motion.section>
 
-        <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="grid items-start gap-8 lg:grid-cols-[1.1fr_0.9fr]">
           <motion.section
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -679,93 +710,247 @@ const Dashboard = ({
             </div>
           </motion.section>
 
-          <div className="grid gap-8">
-            <motion.section
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 }}
-              className="rounded-2xl border bg-card p-6 shadow-card"
-            >
-              <div className="mb-4 flex items-center gap-3">
-                <Send className="h-5 w-5 text-[hsl(200,80%,50%)]" />
-                <h2 className="text-lg font-bold">Link Telegram</h2>
+          <motion.section
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="rounded-2xl border bg-card p-6 shadow-card"
+          >
+            <div className="mb-4 flex items-center gap-3">
+              <Send className="h-5 w-5 text-[hsl(200,80%,50%)]" />
+              <h2 className="text-lg font-bold">Link Telegram</h2>
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-xl bg-muted/50 p-4">
+                <p className="text-sm text-muted-foreground">
+                  Connect your Telegram account to unlock your referral code and earn
+                  <span className="ml-1 font-semibold text-[hsl(28,94%,53%)]">+1,500 bonus credits</span>
+                </p>
               </div>
 
-              <div className="space-y-4">
-                <div className="rounded-xl bg-muted/50 p-4">
-                  <p className="text-sm text-muted-foreground">
-                    Connect your Telegram account to unlock your referral code and earn
-                    <span className="ml-1 font-semibold text-[hsl(28,94%,53%)]">+1,500 bonus credits</span>
-                  </p>
-                </div>
-
-                <div className="relative">
-                  {activeProfile.telegramConnected ? (
-                    <div className="flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[hsl(200,80%,50%)]/70 px-4 text-sm font-medium text-white">
-                      <Send className="h-4 w-4" />
-                      <span>{`Connected${activeProfile.telegramUsername ? ` · ${activeProfile.telegramUsername}` : ""}`}</span>
-                    </div>
-                  ) : (
-                    <Button
-                      className="w-full bg-[hsl(200,80%,50%)] text-white hover:bg-[hsl(200,80%,45%)]"
-                      onClick={onBindTelegram}
-                      disabled={isBindingTelegram}
-                    >
-                      <Send className="h-4 w-4" />
-                      {isBindingTelegram ? "Connecting Telegram..." : !isTelegramWidgetReady ? "Preparing Telegram..." : "Connect Telegram"}
-                    </Button>
-                  )}
-                  {!activeProfile.telegramConnected ? telegramWidgetContent : null}
-                </div>
-
+              <div className="relative">
                 {activeProfile.telegramConnected ? (
-                  <div className="rounded-xl border border-[hsl(200,80%,50%)]/20 bg-[hsl(200,80%,50%)]/5 p-4">
-                    <p className="text-sm font-medium text-foreground">Telegram linked successfully</p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {activeProfile.telegramUsername
-                        ? `Connected as ${activeProfile.telegramUsername}`
-                        : "Your Telegram account is connected and ready for referral credits."}
-                    </p>
+                  <div className="flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[hsl(200,80%,50%)]/70 px-4 text-sm font-medium text-white">
+                    <Send className="h-4 w-4" />
+                    <span>{`Connected${activeProfile.telegramUsername ? ` · ${activeProfile.telegramUsername}` : ""}`}</span>
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-dashed border-[hsl(200,80%,50%)]/30 bg-[hsl(200,80%,50%)]/5 p-4">
-                    <p className="text-sm text-muted-foreground">
-                      {isTelegramWidgetReady
-                        ? "Click Connect Telegram to open the Telegram authorization window. Once approved, the account will be linked automatically."
-                        : "Preparing the Telegram authorization widget. You can continue as soon as it is ready."}
-                    </p>
-                  </div>
+                  <Button
+                    className="w-full bg-[hsl(200,80%,50%)] text-white hover:bg-[hsl(200,80%,45%)]"
+                    onClick={onBindTelegram}
+                    disabled={isBindingTelegram}
+                  >
+                    <Send className="h-4 w-4" />
+                    {isBindingTelegram ? "Connecting Telegram..." : !isTelegramWidgetReady ? "Preparing Telegram..." : "Connect Telegram"}
+                  </Button>
                 )}
+                {!activeProfile.telegramConnected ? telegramWidgetContent : null}
               </div>
-            </motion.section>
 
-            <motion.section
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.25 }}
-              className="rounded-2xl border bg-card p-6 shadow-card"
-            >
-              <div className="mb-4 flex items-center gap-3">
+              {activeProfile.telegramConnected ? (
+                <div className="rounded-xl border border-[hsl(200,80%,50%)]/20 bg-[hsl(200,80%,50%)]/5 p-4">
+                  <p className="text-sm font-medium text-foreground">Telegram linked successfully</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {activeProfile.telegramUsername
+                      ? `Connected as ${activeProfile.telegramUsername}`
+                      : "Your Telegram account is connected and ready for referral credits."}
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-[hsl(200,80%,50%)]/30 bg-[hsl(200,80%,50%)]/5 p-4">
+                  <p className="text-sm text-muted-foreground">
+                    {isTelegramWidgetReady
+                      ? "Click Connect Telegram to open the Telegram authorization window. Once approved, the account will be linked automatically."
+                      : "Preparing the Telegram authorization widget. You can continue as soon as it is ready."}
+                  </p>
+                </div>
+              )}
+            </div>
+          </motion.section>
+        </div>
+
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.25 }}
+          className="rounded-2xl border bg-card p-6 shadow-card"
+        >
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="flex items-center gap-3">
                 <Users className="h-5 w-5 text-[hsl(28,94%,53%)]" />
                 <h2 className="text-lg font-bold">Referral Stats</h2>
               </div>
+              <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+                Track conversion, referral bonus credits, and claimable payout activity from the API referral scope in one place.
+              </p>
+            </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl bg-muted/50 p-4 text-center">
-                  <p className="text-3xl font-extrabold">{peopleReferred.toLocaleString()}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">People Referred</p>
+            <div className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-foreground">
+              {referralCodeValue
+                ? `Referral code live · ${referralCodeValue}`
+                : activeProfile.telegramConnected
+                  ? "Referral code is syncing from the backend."
+                  : "Link Telegram to unlock your referral link and referral tracking."}
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+            <div className="rounded-2xl border border-border/70 bg-gradient-to-br from-background to-muted/40 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-foreground">People Referred</p>
+                <Users className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <p className="mt-4 text-3xl font-extrabold">{peopleReferred.toLocaleString()}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Users who joined through your referral link.</p>
+            </div>
+
+            <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/80 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-emerald-900">Paid Referrals</p>
+                <Check className="h-4 w-4 text-emerald-700" />
+              </div>
+              <p className="mt-4 text-3xl font-extrabold text-emerald-700">{paidReferrals.toLocaleString()}</p>
+              <p className="mt-1 text-xs text-emerald-700/80">Unique referred users with at least one payment.</p>
+            </div>
+
+            <div className="rounded-2xl border border-sky-200/80 bg-sky-50/80 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-sky-900">Payment Count</p>
+                <RefreshCw className="h-4 w-4 text-sky-700" />
+              </div>
+              <p className="mt-4 text-3xl font-extrabold text-sky-700">{referralPaymentCount.toLocaleString()}</p>
+              <p className="mt-1 text-xs text-sky-700/80">Total referral payment records returned by the API.</p>
+            </div>
+
+            <div className="rounded-2xl border border-amber-200/80 bg-amber-50/80 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-amber-900">Credits Earned</p>
+                <Link2 className="h-4 w-4 text-amber-700" />
+              </div>
+              <p className="mt-4 text-3xl font-extrabold text-[hsl(28,94%,53%)]">+{creditsEarned.toLocaleString()}</p>
+              <p className="mt-1 text-xs text-amber-700/80">Credits from referral bonus ledger events.</p>
+            </div>
+
+            <div className="rounded-2xl border border-violet-200/80 bg-violet-50/80 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-violet-900">Claimable Amount</p>
+                <Wallet className="h-4 w-4 text-violet-700" />
+              </div>
+              <p className="mt-4 text-3xl font-extrabold text-violet-700">{formatUsdAmount(claimableAmountUsd)}</p>
+              <p className="mt-1 text-xs text-violet-700/80">Current claimable USD accumulated from referral payments.</p>
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
+            <div className="rounded-3xl border bg-muted/30 p-5">
+              <p className="text-sm font-semibold">Performance Snapshot</p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {peopleReferred > 0
+                  ? `${paidReferralRate.toFixed(0)}% of referred users have already generated payment activity.`
+                  : "Share your referral link to start tracking joined users, payments, and claimable amounts."}
+              </p>
+
+              <div className="mt-5 space-y-3">
+                <div className="rounded-2xl bg-background px-4 py-3">
+                  <p className="text-xs text-muted-foreground">Paid Conversion</p>
+                  <p className="mt-1 text-lg font-bold">{peopleReferred > 0 ? `${paidReferralRate.toFixed(1)}%` : "0.0%"}</p>
                 </div>
-                <div className="rounded-xl bg-muted/50 p-4 text-center">
-                  <p className="text-3xl font-extrabold text-[hsl(28,94%,53%)]">+{creditsEarned.toLocaleString()}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Credits Earned</p>
+                <div className="rounded-2xl bg-background px-4 py-3">
+                  <p className="text-xs text-muted-foreground">Average Claimable / Payment</p>
+                  <p className="mt-1 text-lg font-bold">
+                    {referralPaymentCount > 0 ? formatUsdAmount(String(averageClaimablePerPayment)) : "$0.00"}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-background px-4 py-3">
+                  <p className="text-xs text-muted-foreground">Referral Link Status</p>
+                  <p className="mt-1 text-lg font-bold">{referralLink ? "Ready to share" : "Locked"}</p>
                 </div>
               </div>
-              <p className="mt-4 text-sm text-muted-foreground">
-                Track how many users joined from your referral link and how many bonus credits you have earned so far.
-              </p>
-            </motion.section>
+            </div>
+
+            <div className="overflow-hidden rounded-3xl border bg-background/80">
+              <div className="flex flex-col gap-2 border-b px-5 py-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-sm font-semibold">Referral Details</p>
+                  <p className="text-xs text-muted-foreground">Each referred account now includes payment activity and claimable payout data.</p>
+                </div>
+                <span className="text-xs text-muted-foreground">{referralItems.length.toLocaleString()} users</span>
+              </div>
+
+              {referralItems.length ? (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>User</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Claimable</TableHead>
+                        <TableHead>Latest Paid</TableHead>
+                        <TableHead>Joined</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {referralItems.map((item, index) => {
+                        const displayName = formatTelegramUsername(item.telegramUsername) || item.telegramId || `Referral ${index + 1}`;
+
+                        return (
+                          <TableRow key={`${item.telegramId || displayName}-${item.createdAt || index}`}>
+                            <TableCell>
+                              <div className="flex items-center gap-3">
+                                {item.telegramPhotoUrl ? (
+                                  <img
+                                    src={item.telegramPhotoUrl}
+                                    alt={displayName}
+                                    className="h-10 w-10 rounded-full border object-cover"
+                                  />
+                                ) : (
+                                  <div className="flex h-10 w-10 items-center justify-center rounded-full border bg-muted/60">
+                                    <Users className="h-4 w-4 text-muted-foreground" />
+                                  </div>
+                                )}
+                                <div>
+                                  <p className="font-medium">{displayName}</p>
+                                  <p className="text-xs text-muted-foreground">{item.telegramId ? `Telegram ID ${item.telegramId}` : "Telegram user"}</p>
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span
+                                  className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${
+                                    item.hasPaid
+                                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                      : "border-slate-200 bg-slate-50 text-slate-700"
+                                  }`}
+                                >
+                                  {item.hasPaid ? "Paid" : "No payment"}
+                                </span>
+                                <span className="inline-flex rounded-full border px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                                  {item.paymentCount.toLocaleString()} payments
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right font-medium">{formatUsdAmount(item.claimableAmountUsd)}</TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {item.latestPaidAt ? formatHistoryTimestamp(item.latestPaidAt) : "—"}
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">{item.createdAt ? formatHistoryTimestamp(item.createdAt) : "—"}</TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : (
+                <div className="px-5 py-10 text-center text-sm text-muted-foreground">
+                  No referrals yet. Once users join from your link, payment status and claimable amounts will appear here.
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        </motion.section>
 
         <motion.section
           initial={{ opacity: 0, y: 20 }}

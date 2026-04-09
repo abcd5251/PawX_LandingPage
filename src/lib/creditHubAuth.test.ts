@@ -437,16 +437,42 @@ describe("creditHubAuth", () => {
       referralCode: "ABC123",
       stats: {
         peopleReferred: 7,
+        paidReferrals: 3,
+        referralPaymentCount: 5,
         creditsEarned: 3500,
+        claimableAmountUsd: "12.50000000",
       },
-      referrals: [{ twitterId: "1" }],
+      referrals: [
+        {
+          telegramId: "1",
+          telegramUsername: "alice",
+          paymentCount: 2,
+          hasPaid: true,
+          claimableAmountUsd: "4.00000000",
+          latestPaidAt: "2026-04-09T08:00:00.000Z",
+          createdAt: "2026-04-01T10:00:00.000Z",
+        },
+      ],
     });
 
     expect(referralProfile.referralCode).toBe("ABC123");
     expect(referralProfile.referralLink).toBe("https://pawx.example.com/?ref=ABC123");
     expect(referralProfile.peopleReferred).toBe(7);
+    expect(referralProfile.paidReferrals).toBe(3);
+    expect(referralProfile.referralPaymentCount).toBe(5);
     expect(referralProfile.creditsEarned).toBe(3500);
+    expect(referralProfile.claimableAmountUsd).toBe("12.50000000");
+    expect(referralProfile.stats.claimableAmountUsd).toBe("12.50000000");
     expect(referralProfile.referrals).toHaveLength(1);
+    expect(referralProfile.referrals[0]).toMatchObject({
+      telegramId: "1",
+      telegramUsername: "alice",
+      paymentCount: 2,
+      hasPaid: true,
+      claimableAmountUsd: "4.00000000",
+      latestPaidAt: "2026-04-09T08:00:00.000Z",
+      createdAt: "2026-04-01T10:00:00.000Z",
+    });
   });
 
   it("maps referral resolve payloads and normalizes inviter handles", () => {

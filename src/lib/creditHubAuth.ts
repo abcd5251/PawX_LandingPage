@@ -58,12 +58,35 @@ export interface BindTelegramRequest {
   referralCode?: string;
 }
 
+export interface ReferralStats {
+  peopleReferred: number;
+  paidReferrals: number;
+  referralPaymentCount: number;
+  creditsEarned: number;
+  claimableAmountUsd: string;
+}
+
+export interface ReferralItem {
+  telegramId: string;
+  telegramUsername: string;
+  telegramPhotoUrl: string;
+  paymentCount: number;
+  hasPaid: boolean;
+  claimableAmountUsd: string;
+  latestPaidAt: string;
+  createdAt: string;
+}
+
 export interface ReferralProfile {
   referralCode: string;
   referralLink: string;
   peopleReferred: number;
+  paidReferrals: number;
+  referralPaymentCount: number;
   creditsEarned: number;
-  referrals: unknown[];
+  claimableAmountUsd: string;
+  stats: ReferralStats;
+  referrals: ReferralItem[];
 }
 
 export interface ReferralCodeResolution {
@@ -943,21 +966,57 @@ export const toReferralProfile = (payload: unknown): ReferralProfile => {
     referralCode,
     readString(payload, [["referralLink"], ["link"], ["referral", "link"], ["data", "referralLink"], ["data", "link"]]),
   );
+  const peopleReferred = readNumber(
+    payload,
+    [["peopleReferred"], ["referralCount"], ["stats", "peopleReferred"], ["referral", "count"], ["data", "stats", "peopleReferred"]],
+    0,
+  );
+  const paidReferrals = readNumber(payload, [["paidReferrals"], ["stats", "paidReferrals"], ["data", "stats", "paidReferrals"]], 0);
+  const referralPaymentCount = readNumber(
+    payload,
+    [["referralPaymentCount"], ["stats", "referralPaymentCount"], ["data", "stats", "referralPaymentCount"]],
+    0,
+  );
+  const creditsEarned = readNumber(
+    payload,
+    [["creditsEarned"], ["referralBonus"], ["stats", "creditsEarned"], ["referral", "creditsEarned"], ["data", "stats", "creditsEarned"]],
+    0,
+  );
+  const claimableAmountUsd =
+    readString(
+      payload,
+      [["claimableAmountUsd"], ["stats", "claimableAmountUsd"], ["data", "stats", "claimableAmountUsd"]],
+      "",
+    ) || "0";
+  const referrals = readArray(payload, [["referrals"], ["items"], ["data", "referrals"], ["data", "items"]]).map((item) => ({
+    telegramId: readString(item, [["telegramId"], ["telegram_id"]]),
+    telegramUsername: readString(item, [["telegramUsername"], ["telegram_username"], ["username"]]),
+    telegramPhotoUrl: readString(item, [["telegramPhotoUrl"], ["telegram_photo_url"], ["photoUrl"], ["photo_url"]]),
+    paymentCount: readNumber(item, [["paymentCount"], ["payment_count"]], 0),
+    hasPaid: readBoolean(item, [["hasPaid"], ["has_paid"]], false),
+    claimableAmountUsd: readString(item, [["claimableAmountUsd"], ["claimable_amount_in_usd"]], "") || "0",
+    latestPaidAt: readString(item, [["latestPaidAt"], ["latest_paid_at"]]),
+    createdAt: readString(item, [["createdAt"], ["created_at"]]),
+  }));
+
+  const stats: ReferralStats = {
+    peopleReferred,
+    paidReferrals,
+    referralPaymentCount,
+    creditsEarned,
+    claimableAmountUsd,
+  };
 
   return {
     referralCode,
     referralLink,
-    peopleReferred: readNumber(
-      payload,
-      [["peopleReferred"], ["referralCount"], ["stats", "peopleReferred"], ["referral", "count"], ["data", "stats", "peopleReferred"]],
-      0,
-    ),
-    creditsEarned: readNumber(
-      payload,
-      [["creditsEarned"], ["referralBonus"], ["stats", "creditsEarned"], ["referral", "creditsEarned"], ["data", "stats", "creditsEarned"]],
-      0,
-    ),
-    referrals: readArray(payload, [["referrals"], ["items"], ["data", "referrals"], ["data", "items"]]),
+    peopleReferred,
+    paidReferrals,
+    referralPaymentCount,
+    creditsEarned,
+    claimableAmountUsd,
+    stats,
+    referrals,
   };
 };
 
