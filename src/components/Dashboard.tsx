@@ -637,6 +637,22 @@ const Dashboard = ({
                 </p>
               </div>
 
+              {latestApiKey ? (
+                <div className="space-y-4 rounded-2xl border-2 border-primary/30 bg-primary/10 p-5">
+                  <div className="space-y-1">
+                    <p className="text-lg font-bold text-foreground sm:text-xl">New API Key</p>
+                    <p className="text-sm text-muted-foreground">Save the full key now. If you leave or refresh, it will disappear.</p>
+                  </div>
+                  <div className="rounded-xl border bg-background px-4 py-4">
+                    <p className="break-all font-mono text-base font-semibold tracking-wide text-foreground sm:text-lg">{latestApiKey}</p>
+                  </div>
+                  <Button variant="outline" size="lg" className="w-full sm:w-auto" onClick={() => copyText(latestApiKey, "key")}>
+                    {copiedValue === "key" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    {copiedValue === "key" ? "Copied key" : "Copy key"}
+                  </Button>
+                </div>
+              ) : null}
+
               {!activeProfile.hasActiveApiKey ? (
                 <Button className="w-full" onClick={onCreateApiKey} disabled={isCreatingApiKey || isProfileLoading}>
                   <KeyRound className="h-4 w-4" />
@@ -660,17 +676,6 @@ const Dashboard = ({
                   Save the full key now. If you leave or refresh, it will disappear. Rotating disables the old key and only the new key will work.
                 </p>
               </div>
-
-              {latestApiKey ? (
-                <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-4">
-                  <p className="text-sm font-medium">New API key</p>
-                  <p className="break-all text-sm">{latestApiKey}</p>
-                  <Button variant="outline" size="sm" onClick={() => copyText(latestApiKey, "key")}>
-                    {copiedValue === "key" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                    {copiedValue === "key" ? "Copied key" : "Copy key"}
-                  </Button>
-                </div>
-              ) : null}
             </div>
           </motion.section>
 
