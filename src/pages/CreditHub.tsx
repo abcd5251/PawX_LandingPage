@@ -5,13 +5,16 @@ import { useLocation, useNavigate } from "react-router-dom";
 import {
   AUTH_REDIRECT_STORAGE_KEY,
   bindTelegram,
+  buildEmptyCreditsHistory,
   buildEmptyApiUsage,
   buildFallbackProfile,
   clearStoredReferralCode,
   createApiKey,
   createPaymentSession,
   CreditHubApiError,
+  fetchCreditsHistory,
   fetchApiKeyProfile,
+  fetchPaymentSession,
   fetchPaymentSessionStatus,
   fetchReferralProfile,
   fetchApiUsage,
@@ -21,10 +24,16 @@ import {
   getReadableAuthError,
   getXAuthorizationUrl,
   logoutXSession,
+  normalizeCreditHistoryRange,
+  normalizeCreditHistorySource,
   persistReferralCodeFromUrl,
   resolveReferralCode,
   type ApiKeyProfile,
   type ApiUsageSeries,
+  type CreditsHistoryResponse,
+  type CreditHistoryRange,
+  type CreditHistorySource,
+  type GetCreditsHistoryQuery,
   type PaymentPlanId,
   type PaymentSession,
   type PaymentSessionStatusResult,
@@ -51,6 +60,8 @@ interface TelegramAuthWindow extends Window {
   [TELEGRAM_WIDGET_CALLBACK_NAME]?: (user: TelegramWidgetUser) => void;
 }
 
+const TELEGRAM_WIDGET_SCRIPT_ID = "pawx-telegram-widget-script";
+
 const toTelegramAuthPayload = (user: TelegramWidgetUser): TelegramAuthPayload => ({
   id: String(user.id),
   first_name: user.first_name,
@@ -62,7 +73,7 @@ const toTelegramAuthPayload = (user: TelegramWidgetUser): TelegramAuthPayload =>
 });
 
 const isTelegramBoundProfile = (profile: ApiKeyProfile) =>
-  profile.telegramConnected || Boolean(profile.telegramUsername) || profile.telegramBonus > 0;
+  profile.telegramConnected || Boolean(profile.telegramUsername) || Boolean(profile.telegramId) || profile.telegramBonus > 0;
 
 const hasConcreteTwitterId = (twitterId: string) => Boolean(twitterId && twitterId !== "x-session");
 
@@ -73,6 +84,11 @@ const toSessionUserFromProfile = (nextProfile: ApiKeyProfile): XSessionUser => (
   avatar: nextProfile.avatar,
   profileUrl: nextProfile.profileUrl,
 });
+
+const pickConcreteSessionUser = (...candidates: Array<XSessionUser | null | undefined>) =>
+  candidates.find((candidate): candidate is XSessionUser => Boolean(candidate && hasConcreteTwitterId(candidate.twitterId))) ??
+  candidates.find((candidate): candidate is XSessionUser => Boolean(candidate)) ??
+  null;
 
 const getReadableUsageError = (error: unknown, range: UsageRange) => {
   if (error instanceof CreditHubApiError) {
@@ -94,6 +110,15 @@ const getReadablePaymentError = (error: unknown, telegramConnected: boolean) => 
   return getReadableAuthError(error);
 };
 
+const DEFAULT_CREDITS_HISTORY_FILTERS: Required<GetCreditsHistoryQuery> = {
+  range: "30d",
+  source: "all",
+  page: 1,
+  pageSize: 10,
+};
+
+const CREDIT_HISTORY_PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
+
 const CreditHub = () => {
   const [sessionUser, setSessionUser] = useState<XSessionUser | null>(null);
   const [profile, setProfile] = useState<ApiKeyProfile | null>(null);
@@ -113,6 +138,10 @@ const CreditHub = () => {
   const [usage, setUsage] = useState<ApiUsageSeries>(buildEmptyApiUsage("7d"));
   const [usageError, setUsageError] = useState("");
   const [isUsageLoading, setIsUsageLoading] = useState(false);
+  const [creditsHistoryFilters, setCreditsHistoryFilters] = useState<Required<GetCreditsHistoryQuery>>(DEFAULT_CREDITS_HISTORY_FILTERS);
+  const [creditsHistory, setCreditsHistory] = useState<CreditsHistoryResponse>(buildEmptyCreditsHistory(DEFAULT_CREDITS_HISTORY_FILTERS));
+  const [creditsHistoryError, setCreditsHistoryError] = useState("");
+  const [isCreditsHistoryLoading, setIsCreditsHistoryLoading] = useState(false);
   const [isTelegramWidgetReady, setIsTelegramWidgetReady] = useState(false);
   const [paymentSession, setPaymentSession] = useState<PaymentSession | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<PaymentSessionStatusResult | null>(null);
@@ -120,11 +149,45 @@ const CreditHub = () => {
   const [isCheckingPaymentStatus, setIsCheckingPaymentStatus] = useState(false);
   const [activePaymentPlanId, setActivePaymentPlanId] = useState<PaymentPlanId | null>(null);
   const telegramWidgetContainerRef = useRef<HTMLDivElement | null>(null);
+  const paymentPopupWindowRef = useRef<Window | null>(null);
+  const paymentPollingSessionIdRef = useRef<string | null>(null);
+  const paymentPollingStartedAtRef = useRef<number | null>(null);
+  const telegramWidgetBootstrapTimerRef = useRef<number | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const isAuthCallback = location.pathname === "/credit-hub/auth/callback";
   const isPaymentResultRoute = location.pathname === "/payment/result" || location.pathname === "/credit-hub/payment/result";
   const telegramBotUsername = getTelegramBotUsername();
+  const telegramLinked = Boolean(profile && isTelegramBoundProfile(profile));
+  const dashboardProfile = profile ? { ...profile, telegramConnected: telegramLinked } : null;
+
+  const openPaymentPopup = useCallback((checkoutUrl: string) => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+
+    const popup = window.open(
+      checkoutUrl,
+      "pawx-kirapay-checkout",
+      "popup=yes,width=520,height=860,resizable=yes,scrollbars=yes",
+    );
+
+    if (!popup) {
+      return false;
+    }
+
+    paymentPopupWindowRef.current = popup;
+    popup.focus();
+    return true;
+  }, []);
+
+  const closePaymentPopup = useCallback(() => {
+    if (paymentPopupWindowRef.current && !paymentPopupWindowRef.current.closed) {
+      paymentPopupWindowRef.current.close();
+    }
+
+    paymentPopupWindowRef.current = null;
+  }, []);
 
   const loadProfileForUser = useCallback(async (user: XSessionUser) => {
     setIsProfileLoading(true);
@@ -161,6 +224,22 @@ const CreditHub = () => {
       throw error;
     } finally {
       setIsUsageLoading(false);
+    }
+  }, []);
+
+  const loadCreditsHistory = useCallback(async (query: GetCreditsHistoryQuery) => {
+    setIsCreditsHistoryLoading(true);
+    setCreditsHistoryError("");
+
+    try {
+      const nextHistory = await fetchCreditsHistory(query);
+      setCreditsHistory(nextHistory);
+      return nextHistory;
+    } catch (error) {
+      setCreditsHistoryError(getReadableAuthError(error));
+      throw error;
+    } finally {
+      setIsCreditsHistoryLoading(false);
     }
   }, []);
 
@@ -274,6 +353,18 @@ const CreditHub = () => {
 
   useEffect(() => {
     if (!sessionUser) {
+      setCreditsHistory(buildEmptyCreditsHistory(creditsHistoryFilters));
+      setCreditsHistoryError("");
+      return;
+    }
+
+    void loadCreditsHistory(creditsHistoryFilters).catch(() => {
+      void 0;
+    });
+  }, [creditsHistoryFilters, loadCreditsHistory, sessionUser]);
+
+  useEffect(() => {
+    if (!sessionUser) {
       setReferralProfile(null);
       return;
     }
@@ -281,7 +372,56 @@ const CreditHub = () => {
     void loadReferralProfile().catch(() => {
       void 0;
     });
-  }, [loadReferralProfile, profile?.telegramConnected, sessionUser]);
+  }, [loadReferralProfile, sessionUser, telegramLinked]);
+
+  const resolveTelegramBindingContext = useCallback(async () => {
+    const currentProfile = profile;
+    const currentSessionUser = sessionUser;
+    const currentProfileSessionUser = currentProfile ? toSessionUserFromProfile(currentProfile) : null;
+
+    if (currentProfile && isTelegramBoundProfile(currentProfile)) {
+      return {
+        session: pickConcreteSessionUser(currentSessionUser, currentProfileSessionUser),
+        profile: currentProfile,
+        alreadyBound: true,
+      };
+    }
+
+    let nextSessionUser = pickConcreteSessionUser(currentSessionUser, currentProfileSessionUser);
+
+    try {
+      const refreshedSession = await fetchXSession();
+
+      if (refreshedSession) {
+        nextSessionUser = pickConcreteSessionUser(refreshedSession, nextSessionUser);
+        setSessionUser(nextSessionUser);
+      }
+    } catch {
+      void 0;
+    }
+
+    if (nextSessionUser) {
+      try {
+        const nextProfile = await loadProfileForUser(nextSessionUser);
+
+        return {
+          session: pickConcreteSessionUser(toSessionUserFromProfile(nextProfile), nextSessionUser, currentProfileSessionUser),
+          profile: nextProfile,
+          alreadyBound: isTelegramBoundProfile(nextProfile),
+        };
+      } catch (error) {
+        if (!(error instanceof CreditHubApiError && error.status === 401)) {
+          throw error;
+        }
+      }
+    }
+
+    return {
+      session: pickConcreteSessionUser(nextSessionUser, currentProfileSessionUser),
+      profile: currentProfile,
+      alreadyBound: Boolean(currentProfile && isTelegramBoundProfile(currentProfile)),
+    };
+  }, [loadProfileForUser, profile, sessionUser]);
 
   const refreshProfile = useCallback(async () => {
     if (!sessionUser) {
@@ -301,10 +441,63 @@ const CreditHub = () => {
     } catch {
       void 0;
     }
-  }, [loadProfileForUser, loadReferralProfile, loadUsage, sessionUser, usageRange]);
+    try {
+      await loadCreditsHistory(creditsHistoryFilters);
+    } catch {
+      void 0;
+    }
+  }, [creditsHistoryFilters, loadCreditsHistory, loadProfileForUser, loadReferralProfile, loadUsage, sessionUser, usageRange]);
+
+  const settleTelegramLinkedState = useCallback(
+    async (nextProfile: ApiKeyProfile, options?: { alreadyLinked?: boolean }) => {
+      setAuthError("");
+      try {
+        await loadReferralProfile();
+      } catch {
+        void 0;
+      }
+      try {
+        await loadCreditsHistory(creditsHistoryFilters);
+      } catch {
+        void 0;
+      }
+      clearStoredReferralCode();
+      setResolvedReferral(null);
+      setStatusMessage(
+        options?.alreadyLinked
+          ? `Telegram is already linked for this X account. You currently have ${nextProfile.remainingCredits.toLocaleString()} / ${nextProfile.totalCredits.toLocaleString()} credits available.`
+          : `Telegram linked successfully. Credits and account status were refreshed. You now have ${nextProfile.remainingCredits.toLocaleString()} / ${nextProfile.totalCredits.toLocaleString()} credits available.`,
+      );
+    },
+    [creditsHistoryFilters, loadCreditsHistory, loadReferralProfile],
+  );
+
+  const recoverTelegramBindAfterUnauthorized = useCallback(
+    async (previousProfile?: ApiKeyProfile | null) => {
+      const refreshedBindingContext = await resolveTelegramBindingContext();
+      const refreshedProfile = refreshedBindingContext.profile;
+
+      if (!refreshedProfile) {
+        return false;
+      }
+
+      const previousCredits = previousProfile?.totalCredits ?? 0;
+      const creditsIncreased = refreshedProfile.totalCredits > previousCredits;
+
+      if (isTelegramBoundProfile(refreshedProfile) || creditsIncreased) {
+        await settleTelegramLinkedState(refreshedProfile, {
+          alreadyLinked: !creditsIncreased && isTelegramBoundProfile(refreshedProfile),
+        });
+        return true;
+      }
+
+      return false;
+    },
+    [resolveTelegramBindingContext, settleTelegramLinkedState],
+  );
 
   const handleCheckPaymentStatus = useCallback(
-    async (sessionId: string, options?: { clearQuery?: boolean; silent?: boolean }) => {
+    async (sessionId: string, options?: { includeSessionDetails?: boolean; silent?: boolean }) => {
       if (!sessionUser) {
         return null;
       }
@@ -317,31 +510,50 @@ const CreditHub = () => {
       }
 
       try {
-        const nextPaymentStatus = await fetchPaymentSessionStatus(sessionId);
+        const [nextPaymentStatus, nextPaymentSession] = await Promise.all([
+          fetchPaymentSessionStatus(sessionId),
+          options?.includeSessionDetails ? fetchPaymentSession(sessionId) : Promise.resolve(null),
+        ]);
         setPaymentStatus(nextPaymentStatus);
         setPaymentSession((currentSession) =>
-          currentSession && currentSession.id === nextPaymentStatus.id
-            ? {
-                ...currentSession,
-                status: nextPaymentStatus.status,
-                paid: nextPaymentStatus.status === "success",
-                paidAt: nextPaymentStatus.status === "success" && !currentSession.paidAt ? new Date().toISOString() : currentSession.paidAt,
-              }
-            : currentSession,
+          nextPaymentSession
+            ? nextPaymentSession
+            : currentSession && currentSession.id === nextPaymentStatus.sessionId
+              ? {
+                  ...currentSession,
+                  status: nextPaymentStatus.status,
+                  paid: nextPaymentStatus.paid,
+                  paidAt: nextPaymentStatus.paidAt,
+                  paymentId: nextPaymentStatus.paymentId,
+                  paymentMatched: nextPaymentStatus.paymentMatched,
+                  paymentRecordedAt: nextPaymentStatus.paymentRecordedAt,
+                  paymentTxHash: nextPaymentStatus.paymentTxHash,
+                  webhookReceived: nextPaymentStatus.webhookReceived,
+                  telegramId: nextPaymentStatus.telegramId,
+                  twitterId: nextPaymentStatus.twitterId,
+                  creditsToAdd: nextPaymentStatus.creditsToAdd || currentSession.creditsToAdd,
+                }
+              : currentSession,
         );
 
-        if (nextPaymentStatus.status === "success") {
+        const webhookSynced = nextPaymentStatus.paymentMatched || nextPaymentStatus.webhookReceived;
+
+        if (nextPaymentStatus.status === "success" && webhookSynced) {
+          closePaymentPopup();
           await refreshProfile();
+          paymentPollingSessionIdRef.current = null;
+          paymentPollingStartedAtRef.current = null;
           setStatusMessage("Payment completed successfully. Credits and account balances were refreshed.");
+        } else if (nextPaymentStatus.status === "success") {
+          setStatusMessage("Payment was confirmed. Waiting for the webhook to finish syncing credits to your account.");
         } else if (nextPaymentStatus.status === "expired") {
+          closePaymentPopup();
+          paymentPollingSessionIdRef.current = null;
+          paymentPollingStartedAtRef.current = null;
           setStatusMessage("");
           setAuthError("This payment session has expired. Please create a new session and try again.");
-        } else {
+        } else if (!options?.silent) {
           setStatusMessage("Payment session is still pending. Complete the checkout, then refresh the payment status.");
-        }
-
-        if (options?.clearQuery) {
-          navigate("/credit-hub", { replace: true });
         }
 
         return nextPaymentStatus;
@@ -353,7 +565,7 @@ const CreditHub = () => {
         setIsCheckingPaymentStatus(false);
       }
     },
-    [navigate, refreshProfile, sessionUser],
+    [closePaymentPopup, refreshProfile, sessionUser],
   );
 
   const handleTwitterLogin = () => {
@@ -408,7 +620,7 @@ const CreditHub = () => {
         return;
       }
 
-      const telegramConnected = profile?.telegramConnected ?? false;
+      const telegramConnected = telegramLinked;
 
       setAuthError("");
       setStatusMessage("");
@@ -418,15 +630,49 @@ const CreditHub = () => {
         return;
       }
 
+      if (paymentSession?.status === "pending" && paymentSession.checkoutUrl) {
+        const popupOpened = openPaymentPopup(paymentSession.checkoutUrl);
+
+        if (!popupOpened) {
+          setAuthError("The checkout popup was blocked by the browser. Please allow popups for this site and try again.");
+          return;
+        }
+
+        setStatusMessage("An existing pending payment session is already open. Reusing the same checkout window.");
+        return;
+      }
+
       setIsCreatingPayment(true);
       setActivePaymentPlanId(planId);
 
       try {
         const nextPaymentSession = await createPaymentSession({ planId, tokenOut });
         setPaymentSession(nextPaymentSession);
-        setPaymentStatus({ id: nextPaymentSession.id, status: nextPaymentSession.status });
-        setStatusMessage(`Payment session created for ${planId}. Redirecting to the KiraPay checkout now...`);
-        window.location.assign(nextPaymentSession.checkoutUrl);
+        setPaymentStatus({
+          id: nextPaymentSession.id,
+          sessionId: nextPaymentSession.id,
+          planId: nextPaymentSession.plan.id,
+          status: nextPaymentSession.status,
+          paid: nextPaymentSession.paid,
+          paidAt: nextPaymentSession.paidAt,
+          paymentId: nextPaymentSession.paymentId,
+          paymentMatched: nextPaymentSession.paymentMatched,
+          paymentRecordedAt: nextPaymentSession.paymentRecordedAt,
+          paymentTxHash: nextPaymentSession.paymentTxHash,
+          creditsToAdd: nextPaymentSession.creditsToAdd,
+          telegramId: nextPaymentSession.telegramId,
+          twitterId: nextPaymentSession.twitterId,
+          webhookReceived: nextPaymentSession.webhookReceived,
+        });
+        const popupOpened = openPaymentPopup(nextPaymentSession.checkoutUrl);
+
+        if (!popupOpened) {
+          setStatusMessage("");
+          setAuthError("The checkout popup was blocked by the browser. Please allow popups for this site and try again.");
+          return;
+        }
+
+        setStatusMessage(`Payment session created for ${planId}. The KiraPay checkout was opened in a single popup window.`);
       } catch (error) {
         setStatusMessage("");
         setAuthError(getReadablePaymentError(error, telegramConnected));
@@ -435,8 +681,25 @@ const CreditHub = () => {
         setActivePaymentPlanId(null);
       }
     },
-    [profile?.telegramConnected, sessionUser],
+    [openPaymentPopup, paymentSession, sessionUser, telegramLinked],
   );
+
+  const handleOpenPaymentCheckout = useCallback(() => {
+    if (!paymentSession?.checkoutUrl) {
+      return;
+    }
+
+    setAuthError("");
+    const popupOpened = openPaymentPopup(paymentSession.checkoutUrl);
+
+    if (!popupOpened) {
+      setStatusMessage("");
+      setAuthError("The checkout popup was blocked by the browser. Please allow popups for this site and try again.");
+      return;
+    }
+
+    setStatusMessage("Reopened the current KiraPay checkout in the same popup window.");
+  }, [openPaymentPopup, paymentSession?.checkoutUrl]);
 
   const handleBindTelegramAuth = useCallback(
     async (user: TelegramWidgetUser) => {
@@ -444,13 +707,27 @@ const CreditHub = () => {
         return;
       }
 
-      if (!hasConcreteTwitterId(sessionUser.twitterId)) {
-        setAuthError("A valid Twitter ID is not available yet. Please sign in again before linking Telegram.");
-        setStatusMessage("");
+      const bindingContext = await resolveTelegramBindingContext();
+
+      if (bindingContext.alreadyBound) {
+        if (bindingContext.profile) {
+          await settleTelegramLinkedState(bindingContext.profile, { alreadyLinked: true });
+        }
         return;
       }
 
-      const previousProfile = profile;
+      const previousProfile = bindingContext.profile ?? profile;
+      const activeSessionUser = pickConcreteSessionUser(
+        bindingContext.session,
+        sessionUser,
+        previousProfile ? toSessionUserFromProfile(previousProfile) : null,
+      );
+
+      if (!activeSessionUser || !hasConcreteTwitterId(activeSessionUser.twitterId)) {
+        setAuthError("The current X session could not be verified for Telegram binding. Please sign in with X again and retry the first-time link.");
+        setStatusMessage("");
+        return;
+      }
 
       setAuthError("");
       setStatusMessage("");
@@ -459,38 +736,42 @@ const CreditHub = () => {
       try {
         const storedReferralCode = getStoredReferralCode() || undefined;
         await bindTelegram({
-          twitterId: sessionUser.twitterId,
+          twitterId: activeSessionUser.twitterId,
           telegramAuth: toTelegramAuthPayload(user),
           referralCode: storedReferralCode,
         });
 
-        const nextProfile = await loadProfileForUser(sessionUser);
-        await loadReferralProfile();
-        clearStoredReferralCode();
-        setResolvedReferral(null);
-        setStatusMessage(
-          nextProfile.telegramConnected
-            ? `Telegram linked successfully. Credits and account status were refreshed. You now have ${nextProfile.remainingCredits.toLocaleString()} / ${nextProfile.totalCredits.toLocaleString()} credits available.`
-            : "Telegram authorization completed and the account status was refreshed.",
-        );
+        const nextProfile = await loadProfileForUser(activeSessionUser);
+        if (isTelegramBoundProfile(nextProfile)) {
+          await settleTelegramLinkedState(nextProfile);
+        } else {
+          setStatusMessage("Telegram authorization completed and the account status was refreshed.");
+        }
       } catch (error) {
-        try {
-          const refreshedProfile = await loadProfileForUser(sessionUser);
-          const previousCredits = previousProfile?.totalCredits ?? 0;
-          const creditsIncreased = refreshedProfile.totalCredits > previousCredits;
+        if (error instanceof CreditHubApiError && error.status === 401) {
+          setAuthError("");
+          setStatusMessage("Refreshing your X session and Telegram status...");
 
-          if (isTelegramBoundProfile(refreshedProfile) || creditsIncreased) {
-            setAuthError("");
-            try {
-              await loadReferralProfile();
-            } catch {
-              void 0;
+          try {
+            const recovered = await recoverTelegramBindAfterUnauthorized(previousProfile);
+
+            if (recovered) {
+              return;
             }
-            clearStoredReferralCode();
-            setResolvedReferral(null);
-            setStatusMessage(
-              `Telegram linked successfully. Credits and account status were refreshed. You now have ${refreshedProfile.remainingCredits.toLocaleString()} / ${refreshedProfile.totalCredits.toLocaleString()} credits available.`,
-            );
+          } catch {
+            void 0;
+          }
+
+          setStatusMessage("");
+          setAuthError("We couldn't confirm the current X session for a new Telegram link. Please sign in with X again only if this account has never been linked before.");
+          setStatusMessage("");
+          return;
+        }
+
+        try {
+          const recovered = await recoverTelegramBindAfterUnauthorized(previousProfile);
+
+          if (recovered) {
             return;
           }
         } catch {
@@ -498,7 +779,7 @@ const CreditHub = () => {
         }
 
         if (error instanceof CreditHubApiError && error.status === 403) {
-          setAuthError(`Telegram authorization completed, but the backend rejected the bind result. Please confirm bind-telegram is writing to the correct DB account with twitterId=${sessionUser.twitterId}.`);
+          setAuthError(`Telegram authorization completed, but the backend rejected the bind result. Please confirm bind-telegram is writing to the correct DB account with twitterId=${activeSessionUser.twitterId}.`);
           return;
         }
 
@@ -507,59 +788,137 @@ const CreditHub = () => {
         setIsBindingTelegram(false);
       }
     },
-    [loadProfileForUser, loadReferralProfile, profile, sessionUser],
+    [loadProfileForUser, profile, recoverTelegramBindAfterUnauthorized, resolveTelegramBindingContext, sessionUser, settleTelegramLinkedState],
   );
 
   useEffect(() => {
     const widgetContainer = telegramWidgetContainerRef.current;
 
-    setIsTelegramWidgetReady(false);
-
     if (!widgetContainer) {
       return;
     }
 
-    if (!sessionUser || !telegramBotUsername || profile?.telegramConnected) {
+    if (!sessionUser || !telegramBotUsername || telegramLinked) {
+      if (telegramWidgetBootstrapTimerRef.current) {
+        window.clearTimeout(telegramWidgetBootstrapTimerRef.current);
+        telegramWidgetBootstrapTimerRef.current = null;
+      }
+      setIsTelegramWidgetReady(false);
       widgetContainer.innerHTML = "";
       return;
     }
 
     const telegramWindow = window as TelegramAuthWindow;
-    const observer = new MutationObserver(() => {
-      setIsTelegramWidgetReady(Boolean(widgetContainer.querySelector("iframe, button, a, [role='button']")));
-    });
+    let observer: MutationObserver | null = null;
+    let cancelled = false;
+    let handleScriptLoad: (() => void) | null = null;
+
+    const updateWidgetReady = () => {
+      if (cancelled) {
+        return false;
+      }
+
+      const ready = Boolean(widgetContainer.querySelector("iframe, button, a, [role='button']"));
+      setIsTelegramWidgetReady(ready);
+      return ready;
+    };
+
+    const mountWidget = () => {
+      if (cancelled) {
+        return;
+      }
+
+      widgetContainer.innerHTML = "";
+      observer?.disconnect();
+      observer = new MutationObserver(() => {
+        updateWidgetReady();
+      });
+      observer.observe(widgetContainer, { childList: true, subtree: true });
+
+      const widgetMarkupScript = document.createElement("script");
+      widgetMarkupScript.src = "https://telegram.org/js/telegram-widget.js?22";
+      widgetMarkupScript.async = true;
+      widgetMarkupScript.setAttribute("data-telegram-login", telegramBotUsername);
+      widgetMarkupScript.setAttribute("data-size", "large");
+      widgetMarkupScript.setAttribute("data-userpic", "true");
+      widgetMarkupScript.setAttribute("data-request-access", "write");
+      widgetMarkupScript.setAttribute("data-onauth", `${TELEGRAM_WIDGET_CALLBACK_NAME}(user)`);
+      widgetContainer.appendChild(widgetMarkupScript);
+
+      telegramWidgetBootstrapTimerRef.current = window.setTimeout(() => {
+        if (!updateWidgetReady() && !cancelled) {
+          setAuthError(
+            `Telegram widget failed to initialize. Please verify BotFather /setdomain includes ${window.location.origin} and that the bot username is correct.`,
+          );
+        }
+      }, 4000);
+    };
+
+    if (telegramWidgetBootstrapTimerRef.current) {
+      window.clearTimeout(telegramWidgetBootstrapTimerRef.current);
+      telegramWidgetBootstrapTimerRef.current = null;
+    }
+
+    setIsTelegramWidgetReady(false);
+    setAuthError((currentError) =>
+      currentError.startsWith("Telegram widget failed to initialize.") ? "" : currentError,
+    );
 
     telegramWindow[TELEGRAM_WIDGET_CALLBACK_NAME] = (user: TelegramWidgetUser) => {
       void handleBindTelegramAuth(user);
     };
 
-    widgetContainer.innerHTML = "";
-    observer.observe(widgetContainer, { childList: true, subtree: true });
+    const existingScript = document.getElementById(TELEGRAM_WIDGET_SCRIPT_ID) as HTMLScriptElement | null;
 
-    const script = document.createElement("script");
-    script.src = "https://telegram.org/js/telegram-widget.js?22";
-    script.async = true;
-    script.onload = () => {
-      window.setTimeout(() => {
-        setIsTelegramWidgetReady(Boolean(widgetContainer.querySelector("iframe, button, a, [role='button']")));
-      }, 150);
-    };
-    script.setAttribute("data-telegram-login", telegramBotUsername);
-    script.setAttribute("data-size", "large");
-    script.setAttribute("data-userpic", "true");
-    script.setAttribute("data-onauth", `${TELEGRAM_WIDGET_CALLBACK_NAME}(user)`);
-    widgetContainer.appendChild(script);
+    if (existingScript?.dataset.loaded === "true") {
+      mountWidget();
+    } else {
+      const sharedScript =
+        existingScript ||
+        Object.assign(document.createElement("script"), {
+          id: TELEGRAM_WIDGET_SCRIPT_ID,
+          src: "https://telegram.org/js/telegram-widget.js?22",
+          async: true,
+        });
+
+      handleScriptLoad = () => {
+        sharedScript.dataset.loaded = "true";
+        mountWidget();
+      };
+
+      sharedScript.addEventListener("load", handleScriptLoad, { once: true });
+
+      if (!existingScript) {
+        document.body.appendChild(sharedScript);
+      }
+    }
 
     return () => {
-      observer.disconnect();
-      setIsTelegramWidgetReady(false);
+      cancelled = true;
+      observer?.disconnect();
+      if (telegramWidgetBootstrapTimerRef.current) {
+        window.clearTimeout(telegramWidgetBootstrapTimerRef.current);
+        telegramWidgetBootstrapTimerRef.current = null;
+      }
+      if (existingScript && handleScriptLoad) {
+        existingScript.removeEventListener("load", handleScriptLoad);
+      }
       widgetContainer.innerHTML = "";
+      setIsTelegramWidgetReady(false);
       delete telegramWindow[TELEGRAM_WIDGET_CALLBACK_NAME];
     };
-  }, [handleBindTelegramAuth, profile?.telegramConnected, sessionUser, telegramBotUsername]);
+  }, [handleBindTelegramAuth, sessionUser, telegramBotUsername, telegramLinked]);
 
   const handleBindTelegram = useCallback(() => {
-    if (!sessionUser) {
+    if (telegramLinked) {
+      setAuthError("");
+      setStatusMessage("Telegram is already linked for this X account.");
+      return;
+    }
+
+    const activeSessionUser = pickConcreteSessionUser(sessionUser, profile ? toSessionUserFromProfile(profile) : null);
+
+    if (!activeSessionUser) {
       return;
     }
 
@@ -570,7 +929,7 @@ const CreditHub = () => {
       return;
     }
 
-    if (!hasConcreteTwitterId(sessionUser.twitterId)) {
+    if (!hasConcreteTwitterId(activeSessionUser.twitterId)) {
       setStatusMessage("");
       setAuthError("A valid Twitter ID is not available yet. Please sign in again before linking Telegram.");
       return;
@@ -583,7 +942,7 @@ const CreditHub = () => {
     }
 
     setStatusMessage("Complete the confirmation inside the Telegram authorization window. The account will link automatically and refresh your credits.");
-  }, [isTelegramWidgetReady, sessionUser, telegramBotUsername]);
+  }, [isTelegramWidgetReady, profile, sessionUser, telegramBotUsername, telegramLinked]);
 
   const handleLogout = useCallback(async () => {
     setIsLoggingOut(true);
@@ -591,6 +950,7 @@ const CreditHub = () => {
     setStatusMessage("");
 
     try {
+      closePaymentPopup();
       await logoutXSession();
       setSessionUser(null);
       setProfile(null);
@@ -602,12 +962,21 @@ const CreditHub = () => {
       setUsageRange("7d");
       setUsage(buildEmptyApiUsage("7d"));
       setUsageError("");
+      setCreditsHistoryFilters(DEFAULT_CREDITS_HISTORY_FILTERS);
+      setCreditsHistory(buildEmptyCreditsHistory(DEFAULT_CREDITS_HISTORY_FILTERS));
+      setCreditsHistoryError("");
     } catch (error) {
       setAuthError(getReadableAuthError(error));
     } finally {
       setIsLoggingOut(false);
     }
-  }, []);
+  }, [closePaymentPopup]);
+
+  useEffect(() => {
+    return () => {
+      closePaymentPopup();
+    };
+  }, [closePaymentPopup]);
 
   useEffect(() => {
     const sessionId = new URLSearchParams(location.search).get("sessionId")?.trim();
@@ -616,12 +985,61 @@ const CreditHub = () => {
       return;
     }
 
-    if (!isPaymentResultRoute && location.pathname !== "/credit-hub") {
+    if (!isPaymentResultRoute) {
       return;
     }
 
-    void handleCheckPaymentStatus(sessionId, { clearQuery: true, silent: false });
-  }, [handleCheckPaymentStatus, isPaymentResultRoute, location.pathname, location.search, sessionUser]);
+    if (paymentPollingSessionIdRef.current !== sessionId) {
+      paymentPollingSessionIdRef.current = sessionId;
+      paymentPollingStartedAtRef.current = Date.now();
+    }
+
+    void handleCheckPaymentStatus(sessionId, { includeSessionDetails: true, silent: false });
+  }, [handleCheckPaymentStatus, isPaymentResultRoute, location.search, sessionUser]);
+
+  useEffect(() => {
+    const currentSessionId = paymentStatus?.sessionId || paymentSession?.id || "";
+    const currentStatus = paymentStatus?.status || paymentSession?.status || "pending";
+    const paymentMatched = paymentStatus?.paymentMatched ?? paymentSession?.paymentMatched ?? false;
+    const webhookReceived = paymentStatus?.webhookReceived ?? paymentSession?.webhookReceived ?? paymentMatched;
+    const shouldKeepPolling = currentStatus === "pending" || (currentStatus === "success" && !(paymentMatched || webhookReceived));
+
+    if (!sessionUser || !isPaymentResultRoute || !currentSessionId || !shouldKeepPolling) {
+      return;
+    }
+
+    const pollTimer = window.setInterval(() => {
+      const pollingStartedAt = paymentPollingStartedAtRef.current;
+
+      if (pollingStartedAt && Date.now() - pollingStartedAt >= 120000) {
+        window.clearInterval(pollTimer);
+        paymentPollingSessionIdRef.current = null;
+        paymentPollingStartedAtRef.current = null;
+        setStatusMessage("Payment is still syncing after 120 seconds. You can keep this page open or refresh the payment status again shortly.");
+        return;
+      }
+
+      if (!document.hidden) {
+        void handleCheckPaymentStatus(currentSessionId, { silent: true });
+      }
+    }, 3000);
+
+    return () => {
+      window.clearInterval(pollTimer);
+    };
+  }, [
+    handleCheckPaymentStatus,
+    isPaymentResultRoute,
+    paymentSession?.id,
+    paymentSession?.paymentMatched,
+    paymentSession?.status,
+    paymentSession?.webhookReceived,
+    paymentStatus?.paymentMatched,
+    paymentStatus?.sessionId,
+    paymentStatus?.status,
+    paymentStatus?.webhookReceived,
+    sessionUser,
+  ]);
 
   if (!sessionUser) {
     return (
@@ -637,7 +1055,7 @@ const CreditHub = () => {
   return (
     <Dashboard
       sessionUser={sessionUser}
-      profile={profile}
+      profile={dashboardProfile}
       latestApiKey={latestApiKey}
       referralProfile={referralProfile}
       resolvedReferral={resolvedReferral}
@@ -646,12 +1064,18 @@ const CreditHub = () => {
       usage={usage}
       usageRange={usageRange}
       usageError={usageError}
+      creditsHistory={creditsHistory}
+      creditsHistoryError={creditsHistoryError}
+      creditsHistoryRange={creditsHistoryFilters.range}
+      creditsHistorySource={creditsHistoryFilters.source}
+      creditsHistoryPageSize={creditsHistoryFilters.pageSize}
       isProfileLoading={isProfileLoading}
       isCreatingApiKey={isCreatingApiKey}
       isRotatingApiKey={isRotatingApiKey}
       isBindingTelegram={isBindingTelegram}
       isLoggingOut={isLoggingOut}
       isUsageLoading={isUsageLoading}
+      isCreditsHistoryLoading={isCreditsHistoryLoading}
       isTelegramWidgetReady={isTelegramWidgetReady}
       paymentSession={paymentSession}
       paymentStatus={paymentStatus}
@@ -659,10 +1083,10 @@ const CreditHub = () => {
       activePaymentPlanId={activePaymentPlanId}
       isCheckingPaymentStatus={isCheckingPaymentStatus}
       telegramWidgetContent={
-        !profile?.telegramConnected ? (
+        !telegramLinked ? (
           <div
             ref={telegramWidgetContainerRef}
-            className="absolute inset-0 z-20 overflow-hidden opacity-0 [&_iframe]:!h-full [&_iframe]:!w-full [&_iframe]:!max-w-none"
+            className="pointer-events-none absolute inset-0 z-20 overflow-hidden opacity-0 [&_a]:pointer-events-auto [&_a]:!block [&_a]:!h-full [&_a]:!w-full [&_button]:pointer-events-auto [&_button]:!h-full [&_button]:!w-full [&_iframe]:pointer-events-auto [&_iframe]:!h-full [&_iframe]:!w-full [&_iframe]:!max-w-none"
           />
         ) : null
       }
@@ -670,6 +1094,39 @@ const CreditHub = () => {
         void refreshProfile();
       }}
       onUsageRangeChange={setUsageRange}
+      onCreditsHistoryRangeChange={(range: CreditHistoryRange) => {
+        const nextRange = normalizeCreditHistoryRange(range);
+        setCreditsHistoryFilters((current) => ({
+          ...current,
+          range: nextRange,
+          page: 1,
+        }));
+      }}
+      onCreditsHistorySourceChange={(source: CreditHistorySource) => {
+        const nextSource = normalizeCreditHistorySource(source);
+        setCreditsHistoryFilters((current) => ({
+          ...current,
+          source: nextSource,
+          page: 1,
+        }));
+      }}
+      onCreditsHistoryPageChange={(page: number) => {
+        const nextPage = Number.isFinite(page) ? Math.max(1, Math.trunc(page)) : 1;
+        setCreditsHistoryFilters((current) => ({
+          ...current,
+          page: nextPage,
+        }));
+      }}
+      onCreditsHistoryPageSizeChange={(pageSize: number) => {
+        const normalizedPageSize = CREDIT_HISTORY_PAGE_SIZE_OPTIONS.includes(pageSize as (typeof CREDIT_HISTORY_PAGE_SIZE_OPTIONS)[number])
+          ? pageSize
+          : DEFAULT_CREDITS_HISTORY_FILTERS.pageSize;
+        setCreditsHistoryFilters((current) => ({
+          ...current,
+          pageSize: normalizedPageSize,
+          page: 1,
+        }));
+      }}
       onCreateApiKey={() => {
         void handleCreateApiKey(false);
       }}
@@ -681,6 +1138,9 @@ const CreditHub = () => {
       }}
       onCreatePayment={(planId, tokenOut) => {
         void handleCreatePayment(planId, tokenOut);
+      }}
+      onOpenPaymentCheckout={() => {
+        handleOpenPaymentCheckout();
       }}
       onCheckPaymentStatus={(sessionId) => {
         void handleCheckPaymentStatus(sessionId);

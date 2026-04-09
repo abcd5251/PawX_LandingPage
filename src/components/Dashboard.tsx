@@ -1,12 +1,19 @@
 import { motion } from "framer-motion";
-import { BarChart3, Check, Copy, ExternalLink, KeyRound, Link2, LogOut, MessageCircleMore, RefreshCw, Send, ShieldCheck, Users, Wallet } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, BarChart3, Check, Copy, ExternalLink, Filter, KeyRound, Link2, LogOut, MessageCircleMore, RefreshCw, Send, ShieldCheck, Users, Wallet } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import PawIcon from "@/components/PawIcon";
 import { Button } from "@/components/ui/button";
+import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
   ApiKeyProfile,
   ApiUsageSeries,
+  CreditsHistoryResponse,
+  CreditHistoryRange,
+  CreditHistorySource,
   PaymentPlanId,
   PaymentSession,
   PaymentSessionStatusResult,
@@ -28,12 +35,18 @@ interface DashboardProps {
   usage: ApiUsageSeries;
   usageRange: UsageRange;
   usageError: string;
+  creditsHistory: CreditsHistoryResponse;
+  creditsHistoryError: string;
+  creditsHistoryRange: CreditHistoryRange;
+  creditsHistorySource: CreditHistorySource;
+  creditsHistoryPageSize: number;
   isProfileLoading: boolean;
   isCreatingApiKey: boolean;
   isRotatingApiKey: boolean;
   isBindingTelegram: boolean;
   isLoggingOut: boolean;
   isUsageLoading: boolean;
+  isCreditsHistoryLoading: boolean;
   isTelegramWidgetReady: boolean;
   paymentSession: PaymentSession | null;
   paymentStatus: PaymentSessionStatusResult | null;
@@ -43,10 +56,15 @@ interface DashboardProps {
   telegramWidgetContent: ReactNode;
   onRefreshProfile: () => void;
   onUsageRangeChange: (value: UsageRange) => void;
+  onCreditsHistoryRangeChange: (value: CreditHistoryRange) => void;
+  onCreditsHistorySourceChange: (value: CreditHistorySource) => void;
+  onCreditsHistoryPageChange: (page: number) => void;
+  onCreditsHistoryPageSizeChange: (pageSize: number) => void;
   onCreateApiKey: () => void;
   onRotateApiKey: () => void;
   onBindTelegram: () => void;
   onCreatePayment: (planId: PaymentPlanId, tokenOut: PaymentTokenOut) => void;
+  onOpenPaymentCheckout: () => void;
   onCheckPaymentStatus: (sessionId: string) => void;
   onLogout: () => void;
 }
@@ -57,9 +75,9 @@ const TOP_UP_PLANS = [
     id: "Starter",
     name: "Starter Pack",
     price: "2 USDC",
-    credits: "1,600 Credits",
-    description: "A compact top-up for testing flows and light API usage.",
-    features: ["USDC payment", "Fast credit activation", "Good for personal testing"],
+    credits: "1,000 Credits",
+    description: "Entry top-up mapped to the backend Starter payment plan.",
+    features: ["Base USDC checkout", "Webhook adds 1,000 credits", "Good for light API usage"],
     actionLabel: "Top Up 2 USDC",
     highlighted: false,
   },
@@ -67,9 +85,9 @@ const TOP_UP_PLANS = [
     id: "Standard",
     name: "Standard Pack",
     price: "4 USDC",
-    credits: "1,800 Credits",
-    description: "Balanced top-up for recurring development and integration work.",
-    features: ["USDC payment", "Extra credits boost", "Better for repeated usage"],
+    credits: "3,000 Credits",
+    description: "Recommended top-up mapped to the backend Standard payment plan.",
+    features: ["Base USDC checkout", "Webhook adds 3,000 credits", "Best fit for recurring usage"],
     actionLabel: "Top Up 4 USDC",
     highlighted: true,
   },
@@ -77,9 +95,9 @@ const TOP_UP_PLANS = [
     id: "Advanced",
     name: "Advanced Pack",
     price: "6 USDC",
-    credits: "2,000 Credits",
-    description: "The highest credit bundle in this quick top-up set.",
-    features: ["USDC payment", "Best value in this block", "Suitable for heavier testing"],
+    credits: "5,000 Credits",
+    description: "Highest quick top-up mapped to the backend Advanced payment plan.",
+    features: ["Base USDC checkout", "Webhook adds 5,000 credits", "Suitable for heavier workloads"],
     actionLabel: "Top Up 6 USDC",
     highlighted: false,
   },
@@ -114,6 +132,72 @@ const CUSTOM_PLAN = {
   href: SUPPORT_CONTACT_URL,
 } as const;
 
+type InsightsTab = "usage" | "history";
+type CreditsDirection = "all" | "added" | "deducted";
+
+const formatHistoryDate = (value: string) => {
+  if (!value) {
+    return "Unknown date";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+};
+
+const formatHistoryTimestamp = (value: string) => {
+  if (!value) {
+    return "Unknown";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString();
+};
+
+const getHistorySourceLabel = (value: string) => {
+  if (value === "topup") {
+    return "Top Up";
+  }
+  if (value === "signup") {
+    return "Signup";
+  }
+  if (value === "telegram") {
+    return "Telegram";
+  }
+  if (value === "referral") {
+    return "Referral";
+  }
+  return "Other";
+};
+
+const getHistorySourceTone = (value: string) => {
+  if (value === "topup") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (value === "signup") {
+    return "border-sky-200 bg-sky-50 text-sky-700";
+  }
+  if (value === "telegram") {
+    return "border-cyan-200 bg-cyan-50 text-cyan-700";
+  }
+  if (value === "referral") {
+    return "border-violet-200 bg-violet-50 text-violet-700";
+  }
+  return "border-slate-200 bg-slate-50 text-slate-700";
+};
+
+const formatSignedCredits = (value: number) => `${value > 0 ? "+" : ""}${value.toLocaleString()}`;
+
 const Dashboard = ({
   sessionUser,
   profile,
@@ -125,12 +209,18 @@ const Dashboard = ({
   usage,
   usageRange,
   usageError,
+  creditsHistory,
+  creditsHistoryError,
+  creditsHistoryRange,
+  creditsHistorySource,
+  creditsHistoryPageSize,
   isProfileLoading,
   isCreatingApiKey,
   isRotatingApiKey,
   isBindingTelegram,
   isLoggingOut,
   isUsageLoading,
+  isCreditsHistoryLoading,
   isTelegramWidgetReady,
   paymentSession,
   paymentStatus,
@@ -140,18 +230,26 @@ const Dashboard = ({
   telegramWidgetContent,
   onRefreshProfile,
   onUsageRangeChange,
+  onCreditsHistoryRangeChange,
+  onCreditsHistorySourceChange,
+  onCreditsHistoryPageChange,
+  onCreditsHistoryPageSizeChange,
   onCreateApiKey,
   onRotateApiKey,
   onBindTelegram,
   onCreatePayment,
+  onOpenPaymentCheckout,
   onCheckPaymentStatus,
   onLogout,
 }: DashboardProps) => {
   const [copiedValue, setCopiedValue] = useState<"" | "key" | "handle" | "twitterId" | "referralCode" | "referralLink">("");
   const [selectedPaymentTokenId, setSelectedPaymentTokenId] = useState<(typeof PAYMENT_TOKEN_OPTIONS)[number]["id"]>(PAYMENT_TOKEN_OPTIONS[0].id);
+  const [insightsTab, setInsightsTab] = useState<InsightsTab>("usage");
+  const [creditsDirection, setCreditsDirection] = useState<CreditsDirection>("all");
 
   const activeProfile = profile ?? {
     ...sessionUser,
+    telegramId: "",
     baseCredits: 0,
     telegramBonus: 0,
     referralBonus: 0,
@@ -207,15 +305,77 @@ const Dashboard = ({
     return usage.totalCreditsUsed / usage.days.length;
   }, [usage.days.length, usage.totalCreditsUsed]);
 
+  const directionFilteredHistoryItems = useMemo(() => {
+    if (creditsDirection === "added") {
+      return creditsHistory.items.filter((item) => item.amount > 0);
+    }
+    if (creditsDirection === "deducted") {
+      return creditsHistory.items.filter((item) => item.amount < 0);
+    }
+    return creditsHistory.items;
+  }, [creditsDirection, creditsHistory.items]);
+
+  const creditsHistoryChartData = useMemo(() => {
+    const grouped = new Map<string, { date: string; label: string; positiveAmount: number; negativeAmount: number; events: number }>();
+
+    for (const item of directionFilteredHistoryItems) {
+      const label = formatHistoryDate(item.createdAt);
+      const existing = grouped.get(label) ?? {
+        date: item.createdAt,
+        label,
+        positiveAmount: 0,
+        negativeAmount: 0,
+        events: 0,
+      };
+
+      existing.date = item.createdAt;
+      if (item.amount >= 0) {
+        existing.positiveAmount += item.amount;
+      } else {
+        existing.negativeAmount += item.amount;
+      }
+      existing.events += 1;
+      grouped.set(label, existing);
+    }
+
+    return Array.from(grouped.values()).sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
+  }, [directionFilteredHistoryItems]);
+
+  const filteredHistoryNetAmount = useMemo(
+    () => directionFilteredHistoryItems.reduce((sum, item) => sum + item.amount, 0),
+    [directionFilteredHistoryItems],
+  );
+
+  const filteredHistoryAddedAmount = useMemo(
+    () => directionFilteredHistoryItems.filter((item) => item.amount > 0).reduce((sum, item) => sum + item.amount, 0),
+    [directionFilteredHistoryItems],
+  );
+
+  const filteredHistoryDeductedAmount = useMemo(
+    () => directionFilteredHistoryItems.filter((item) => item.amount < 0).reduce((sum, item) => sum + Math.abs(item.amount), 0),
+    [directionFilteredHistoryItems],
+  );
+
   const selectedPaymentToken = useMemo(
     () => PAYMENT_TOKEN_OPTIONS.find((option) => option.id === selectedPaymentTokenId) ?? PAYMENT_TOKEN_OPTIONS[0],
     [selectedPaymentTokenId],
   );
-  const activePaymentSessionId = paymentStatus?.id || paymentSession?.id || "";
+  const appliedCreditsHistoryFilters = creditsHistory.filters;
+  const activePaymentSessionId = paymentStatus?.sessionId || paymentStatus?.id || paymentSession?.id || "";
   const activePaymentState = paymentStatus?.status || paymentSession?.status || null;
   const activePaymentCheckoutUrl = paymentSession?.checkoutUrl || "";
   const activePaymentExpiresAt = paymentSession?.expiresAt || "";
   const activePaymentPlan = paymentSession?.plan;
+  const activePaymentMatched = paymentStatus?.paymentMatched ?? paymentSession?.paymentMatched ?? false;
+  const activeWebhookReceived = paymentStatus?.webhookReceived ?? paymentSession?.webhookReceived ?? activePaymentMatched;
+  const activePaymentPaid = paymentStatus?.paid ?? paymentSession?.paid ?? false;
+  const activePaymentTxHash = paymentStatus?.paymentTxHash || paymentSession?.paymentTxHash || "";
+  const activePaymentId = paymentStatus?.paymentId || paymentSession?.paymentId || "";
+  const activePaymentRecordedAt = paymentStatus?.paymentRecordedAt || paymentSession?.paymentRecordedAt || "";
+  const activePaymentPaidAt = paymentStatus?.paidAt || paymentSession?.paidAt || "";
+  const activePaymentCredits = paymentStatus?.creditsToAdd || paymentSession?.creditsToAdd || activePaymentPlan?.credits || 0;
+  const hasPendingPaymentSession = activePaymentState === "pending" && Boolean(activePaymentPlan);
+  const isPaymentSynced = activePaymentState === "success" && (activePaymentMatched || activeWebhookReceived);
   const paymentStatusTone =
     activePaymentState === "success"
       ? "border-emerald-300/60 bg-emerald-50 text-emerald-700"
@@ -535,20 +695,21 @@ const Dashboard = ({
                 </div>
 
                 <div className="relative">
-                  <Button
-                    className="w-full bg-[hsl(200,80%,50%)] text-white hover:bg-[hsl(200,80%,45%)]"
-                    onClick={onBindTelegram}
-                    disabled={isBindingTelegram || activeProfile.telegramConnected}
-                  >
-                    <Send className="h-4 w-4" />
-                    {activeProfile.telegramConnected
-                      ? `Connected${activeProfile.telegramUsername ? ` · ${activeProfile.telegramUsername}` : ""}`
-                      : isBindingTelegram
-                        ? "Connecting Telegram..."
-                        : !isTelegramWidgetReady
-                          ? "Preparing Telegram..."
-                          : "Connect Telegram"}
-                  </Button>
+                  {activeProfile.telegramConnected ? (
+                    <div className="flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[hsl(200,80%,50%)]/70 px-4 text-sm font-medium text-white">
+                      <Send className="h-4 w-4" />
+                      <span>{`Connected${activeProfile.telegramUsername ? ` · ${activeProfile.telegramUsername}` : ""}`}</span>
+                    </div>
+                  ) : (
+                    <Button
+                      className="w-full bg-[hsl(200,80%,50%)] text-white hover:bg-[hsl(200,80%,45%)]"
+                      onClick={onBindTelegram}
+                      disabled={isBindingTelegram}
+                    >
+                      <Send className="h-4 w-4" />
+                      {isBindingTelegram ? "Connecting Telegram..." : !isTelegramWidgetReady ? "Preparing Telegram..." : "Connect Telegram"}
+                    </Button>
+                  )}
                   {!activeProfile.telegramConnected ? telegramWidgetContent : null}
                 </div>
 
@@ -628,7 +789,7 @@ const Dashboard = ({
               <div className="max-w-2xl">
                 <p className="text-sm font-semibold">Settlement Token</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Select which USDC network the KiraPay checkout should use. The backend validates the final tokenOut payload before creating the payment session.
+                  Select which USDC network the KiraPay checkout should use. The frontend sends only planId, tokenOut, and redirectUrl, and the backend validates the final payload before creating the payment session.
                 </p>
               </div>
               {!activeProfile.telegramConnected ? (
@@ -687,21 +848,52 @@ const Dashboard = ({
                   {formattedPaymentExpiry ? (
                     <p className="mt-2 text-sm text-muted-foreground">Expires at {formattedPaymentExpiry}</p>
                   ) : null}
-                  {activePaymentState === "success" ? (
-                    <p className="mt-2 text-sm text-emerald-700">Credits are applied by webhook. If the balance looks stale, refresh the payment status once more.</p>
+                  {isPaymentSynced ? (
+                    <p className="mt-2 text-sm text-emerald-700">Webhook sync finished. Credits have been written to the account and the balance can be refreshed safely.</p>
+                  ) : activePaymentState === "success" ? (
+                    <p className="mt-2 text-sm text-amber-700">Payment is confirmed, but the webhook is still syncing credits. Keep this page open while the status updates.</p>
                   ) : null}
                   {activePaymentState === "pending" ? (
-                    <p className="mt-2 text-sm text-amber-700">Checkout is still open. Complete the KiraPay payment, then refresh this session status.</p>
+                    <p className="mt-2 text-sm text-amber-700">
+                      Checkout is still open. Re-clicking top up reuses the same popup, so the UI will not create a stack of duplicate checkout windows.
+                    </p>
+                  ) : null}
+                  {activePaymentCredits ? (
+                    <p className="mt-2 text-sm text-muted-foreground">Credits to add after successful webhook sync: {activePaymentCredits.toLocaleString()}</p>
+                  ) : null}
+                  {(activePaymentPaid || activePaymentMatched || activeWebhookReceived) && (
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                      <span className={`rounded-full border px-3 py-1 ${activePaymentPaid ? "border-emerald-300/60 bg-emerald-50 text-emerald-700" : "bg-background"}`}>
+                        {activePaymentPaid ? "Invoice paid" : "Invoice pending"}
+                      </span>
+                      <span
+                        className={`rounded-full border px-3 py-1 ${
+                          activePaymentMatched || activeWebhookReceived ? "border-emerald-300/60 bg-emerald-50 text-emerald-700" : "bg-background"
+                        }`}
+                      >
+                        {activePaymentMatched || activeWebhookReceived ? "Webhook matched" : "Webhook pending"}
+                      </span>
+                    </div>
+                  )}
+                  {activePaymentPaidAt ? (
+                    <p className="mt-2 text-sm text-muted-foreground">Paid at {new Date(activePaymentPaidAt).toLocaleString()}</p>
+                  ) : null}
+                  {activePaymentRecordedAt ? (
+                    <p className="mt-2 text-sm text-muted-foreground">Recorded at {new Date(activePaymentRecordedAt).toLocaleString()}</p>
+                  ) : null}
+                  {activePaymentId ? (
+                    <p className="mt-2 break-all text-xs text-muted-foreground">Payment ID: {activePaymentId}</p>
+                  ) : null}
+                  {activePaymentTxHash ? (
+                    <p className="mt-2 break-all text-xs text-muted-foreground">Tx Hash: {activePaymentTxHash}</p>
                   ) : null}
                 </div>
 
                 <div className="flex flex-col gap-3 sm:flex-row lg:flex-col">
-                  {activePaymentCheckoutUrl ? (
-                    <Button variant="outline" asChild>
-                      <a href={activePaymentCheckoutUrl} target="_blank" rel="noreferrer">
-                        <ExternalLink className="h-4 w-4" />
-                        Continue Checkout
-                      </a>
+                  {activePaymentCheckoutUrl && activePaymentState === "pending" ? (
+                    <Button variant="outline" onClick={onOpenPaymentCheckout}>
+                      <ExternalLink className="h-4 w-4" />
+                      Continue Checkout
                     </Button>
                   ) : null}
                   <Button onClick={() => onCheckPaymentStatus(activePaymentSessionId)} disabled={isCheckingPaymentStatus}>
@@ -747,6 +939,14 @@ const Dashboard = ({
                   ))}
                 </div>
 
+                {hasPendingPaymentSession ? (
+                  <p className="mt-4 text-xs text-muted-foreground">
+                    {activePaymentPlan?.id === plan.id
+                      ? "This pending session will reopen the same checkout popup until it succeeds or expires."
+                      : `A ${activePaymentPlan?.id} checkout is currently pending. Finish or refresh that session before starting a new one.`}
+                  </p>
+                ) : null}
+
                 <Button
                   className="mt-6 w-full"
                   variant={plan.highlighted ? "default" : "outline"}
@@ -756,9 +956,15 @@ const Dashboard = ({
                       address: selectedPaymentToken.address,
                     })
                   }
-                  disabled={isCreatingPayment || !activeProfile.telegramConnected}
+                  disabled={isCreatingPayment || !activeProfile.telegramConnected || (hasPendingPaymentSession && activePaymentPlan?.id !== plan.id)}
                 >
-                  {isCreatingPayment && activePaymentPlanId === plan.id ? "Creating Session..." : plan.actionLabel}
+                  {isCreatingPayment && activePaymentPlanId === plan.id
+                    ? "Creating Session..."
+                    : hasPendingPaymentSession && activePaymentPlan?.id === plan.id
+                      ? "Continue Pending Checkout"
+                      : hasPendingPaymentSession
+                        ? "Pending Session In Progress"
+                        : plan.actionLabel}
                 </Button>
               </div>
             ))}
@@ -772,6 +978,9 @@ const Dashboard = ({
                   <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">{CUSTOM_PLAN.label}</span>
                 </div>
                 <p className="mt-2 text-sm text-muted-foreground">{CUSTOM_PLAN.description}</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Credits from Starter, Standard, and Advanced are written by the KiraPay webhook after payment confirmation, not by a direct top-up call from the browser.
+                </p>
               </div>
               <Button variant="outline" asChild>
                 <a href={CUSTOM_PLAN.href} target="_blank" rel="noreferrer">
@@ -789,94 +998,418 @@ const Dashboard = ({
           transition={{ delay: 0.3 }}
           className="rounded-2xl border bg-card p-6 shadow-card"
         >
-          <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-center gap-3">
-              <BarChart3 className="h-5 w-5 text-primary" />
-              <div>
-                <h2 className="text-lg font-bold">Daily Usage ({usageRange === "7d" ? "Last 7 Days" : "Last 30 Days"})</h2>
-                <p className="text-sm text-muted-foreground">Track your daily credits used and request count for this account.</p>
+          <Tabs value={insightsTab} onValueChange={(value) => setInsightsTab(value as InsightsTab)}>
+            <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex items-center gap-3">
+                <BarChart3 className="h-5 w-5 text-primary" />
+                <div>
+                  <h2 className="text-lg font-bold">Credit Insights</h2>
+                  <p className="text-sm text-muted-foreground">Switch between burn rate analytics and your top-up / credits flow history.</p>
+                </div>
               </div>
+
+              <TabsList className="grid w-full max-w-md grid-cols-2">
+                <TabsTrigger value="usage">Usage Trend</TabsTrigger>
+                <TabsTrigger value="history">Credits History</TabsTrigger>
+              </TabsList>
             </div>
 
-            <div className="flex items-center gap-2 rounded-xl bg-muted/50 p-1">
-              {(["7d", "30d"] as UsageRange[]).map((range) => (
-                <Button
-                  key={range}
-                  variant={usageRange === range ? "default" : "ghost"}
-                  size="sm"
-                  onClick={() => onUsageRangeChange(range)}
-                  disabled={isUsageLoading}
-                >
-                  {range === "7d" ? "Last 7 days" : "Last 30 days"}
-                </Button>
-              ))}
-            </div>
-          </div>
+            <TabsContent value="usage" className="space-y-4">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h3 className="text-base font-bold">Daily Usage ({usageRange === "7d" ? "Last 7 Days" : "Last 30 Days"})</h3>
+                  <p className="text-sm text-muted-foreground">Track credits consumed and request count returned by the usage API for the selected range.</p>
+                </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-xl bg-muted/50 p-4">
-              <p className="text-xs text-muted-foreground">Credits Used</p>
-              <p className="mt-1 text-2xl font-extrabold">{usage.totalCreditsUsed.toLocaleString()}</p>
-            </div>
-            <div className="rounded-xl bg-muted/50 p-4">
-              <p className="text-xs text-muted-foreground">API Requests</p>
-              <p className="mt-1 text-2xl font-extrabold">{usage.totalRequestCount.toLocaleString()}</p>
-            </div>
-            <div className="rounded-xl bg-muted/50 p-4">
-              <p className="text-xs text-muted-foreground">Current Balance</p>
-              <p className="mt-1 text-2xl font-extrabold">{usage.currentBalance.toLocaleString()}</p>
-            </div>
-          </div>
+                <div className="flex items-center gap-2 rounded-xl bg-muted/50 p-1">
+                  {(["7d", "30d"] as UsageRange[]).map((range) => (
+                    <Button
+                      key={range}
+                      variant={usageRange === range ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => onUsageRangeChange(range)}
+                      disabled={isUsageLoading}
+                    >
+                      {range === "7d" ? "Last 7 days" : "Last 30 days"}
+                    </Button>
+                  ))}
+                </div>
+              </div>
 
-          {usageError ? (
-            <p className="mb-4 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-700">{usageError}</p>
-          ) : null}
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl bg-muted/50 p-4">
+                  <p className="text-xs text-muted-foreground">Credits Used in Range</p>
+                  <p className="mt-1 text-2xl font-extrabold">{usage.totalCreditsUsed.toLocaleString()}</p>
+                </div>
+                <div className="rounded-xl bg-muted/50 p-4">
+                  <p className="text-xs text-muted-foreground">API Requests</p>
+                  <p className="mt-1 text-2xl font-extrabold">{usage.totalRequestCount.toLocaleString()}</p>
+                </div>
+                <div className="rounded-xl bg-muted/50 p-4">
+                  <p className="text-xs text-muted-foreground">Current Balance</p>
+                  <p className="mt-1 text-2xl font-extrabold">{usage.currentBalance.toLocaleString()}</p>
+                </div>
+              </div>
 
-          <div className="rounded-2xl border bg-background/80 p-4">
-            <div className="h-[280px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={usage.days}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(30 25% 88%)" />
-                  <XAxis dataKey="label" tick={{ fontSize: 12, fill: "hsl(20 10% 45%)" }} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "hsl(20 10% 45%)" }} />
-                  <Tooltip
-                    contentStyle={{
-                      background: "hsl(30 50% 98%)",
-                      border: "1px solid hsl(30 25% 88%)",
-                      borderRadius: "12px",
-                      fontSize: "13px",
-                    }}
-                    formatter={(value: number, name: string) => [
-                      Number(value).toLocaleString(),
-                      name === "creditsUsed" ? "Credits Used" : "API Requests",
-                    ]}
-                    labelFormatter={(label: string, payload) =>
-                      payload?.[0]?.payload?.date ? `${label} · ${payload[0].payload.date}` : label
-                    }
-                  />
-                  <Bar dataKey="creditsUsed" fill="hsl(28 90% 55%)" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+              {usageError ? (
+                <p className="rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-700">{usageError}</p>
+              ) : null}
 
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
-            <p>
-              {isUsageLoading
-                ? "Loading usage..."
-                : `Showing ${usage.days.length.toLocaleString()} daily points for ${usage.range} · ${usage.apiKeyType || "session"} · avg ${averageDailyUsage.toFixed(1)}/day.`}
-            </p>
-            {!usageError ? <p>Tooltip includes daily request count for each bar.</p> : null}
-          </div>
+              <div className="rounded-2xl border bg-background/80 p-4">
+                <div className="h-[280px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={usage.days}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(30 25% 88%)" />
+                      <XAxis dataKey="label" tick={{ fontSize: 12, fill: "hsl(20 10% 45%)" }} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "hsl(20 10% 45%)" }} />
+                      <Tooltip
+                        contentStyle={{
+                          background: "hsl(30 50% 98%)",
+                          border: "1px solid hsl(30 25% 88%)",
+                          borderRadius: "12px",
+                          fontSize: "13px",
+                        }}
+                        formatter={(value: number, name: string) => [
+                          Number(value).toLocaleString(),
+                          name === "creditsUsed" ? "Credits Used" : "API Requests",
+                        ]}
+                        labelFormatter={(label: string, payload) =>
+                          payload?.[0]?.payload?.date ? `${label} · ${payload[0].payload.date}` : label
+                        }
+                      />
+                      <Bar dataKey="creditsUsed" fill="hsl(28 90% 55%)" radius={[6, 6, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
 
-          {!usageError && (usage.twitterId || usage.telegramId || usage.accountStatus) ? (
-            <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
-              {usage.accountStatus ? <span className="rounded-full border px-3 py-1">Status {usage.accountStatus}</span> : null}
-              {usage.apiKeyType ? <span className="rounded-full border px-3 py-1">API Key {usage.apiKeyType}</span> : null}
-              {usage.twitterId ? <span className="rounded-full border px-3 py-1">Twitter ID {usage.twitterId}</span> : null}
-              {usage.telegramId ? <span className="rounded-full border px-3 py-1">Telegram ID {usage.telegramId}</span> : null}
-            </div>
-          ) : null}
+              <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+                <p>
+                  {isUsageLoading
+                    ? "Loading usage..."
+                    : `Showing ${usage.days.length.toLocaleString()} daily points returned for ${usage.range} (${usage.rangeDays} days) · ${usage.apiKeyType || "session"} · avg ${averageDailyUsage.toFixed(1)}/day.`}
+                </p>
+                {!usageError ? <p>Tooltip includes daily request count for each bar.</p> : null}
+              </div>
+
+              {!usageError && (usage.twitterId || usage.telegramId || usage.accountStatus) ? (
+                <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                  <span className="rounded-full border px-3 py-1">Range {usage.range}</span>
+                  <span className="rounded-full border px-3 py-1">Window {usage.rangeDays} days</span>
+                  {usage.accountStatus ? <span className="rounded-full border px-3 py-1">Status {usage.accountStatus}</span> : null}
+                  {usage.apiKeyType ? <span className="rounded-full border px-3 py-1">API Key {usage.apiKeyType}</span> : null}
+                  {usage.twitterId ? <span className="rounded-full border px-3 py-1">Twitter ID {usage.twitterId}</span> : null}
+                  {usage.telegramId ? <span className="rounded-full border px-3 py-1">Telegram ID {usage.telegramId}</span> : null}
+                </div>
+              ) : null}
+            </TabsContent>
+
+            <TabsContent value="history" className="space-y-5">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                <div>
+                  <h3 className="text-base font-bold">Credits Flow & Top Up History</h3>
+                  <p className="text-sm text-muted-foreground">Review each credit addition or deduction, with separate visual focus for inflows and outflows.</p>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className="min-w-[140px]">
+                    <p className="mb-1 flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      <Filter className="h-3.5 w-3.5" />
+                      Range
+                    </p>
+                    <Select value={creditsHistoryRange} onValueChange={(value) => onCreditsHistoryRangeChange(value as CreditHistoryRange)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="7d">Last 7 days</SelectItem>
+                        <SelectItem value="30d">Last 30 days</SelectItem>
+                        <SelectItem value="all">All time</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="min-w-[140px]">
+                    <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Source</p>
+                    <Select value={creditsHistorySource} onValueChange={(value) => onCreditsHistorySourceChange(value as CreditHistorySource)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All sources</SelectItem>
+                        <SelectItem value="topup">Top up only</SelectItem>
+                        <SelectItem value="signup">Signup bonus</SelectItem>
+                        <SelectItem value="telegram">Telegram bonus</SelectItem>
+                        <SelectItem value="referral">Referral bonus</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="min-w-[140px]">
+                    <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Rows</p>
+                    <Select value={String(creditsHistoryPageSize)} onValueChange={(value) => onCreditsHistoryPageSizeChange(Number(value))}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10 rows</SelectItem>
+                        <SelectItem value="20">20 rows</SelectItem>
+                        <SelectItem value="50">50 rows</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="min-w-[160px]">
+                    <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Direction</p>
+                    <div className="flex items-center gap-1 rounded-xl bg-muted/50 p-1">
+                      {([
+                        { value: "all", label: "All" },
+                        { value: "added", label: "Added" },
+                        { value: "deducted", label: "Deducted" },
+                      ] as Array<{ value: CreditsDirection; label: string }>).map((option) => (
+                        <Button
+                          key={option.value}
+                          type="button"
+                          variant={creditsDirection === option.value ? "default" : "ghost"}
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => setCreditsDirection(option.value)}
+                        >
+                          {option.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                <div className="rounded-2xl border border-emerald-200/70 bg-emerald-50/70 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-emerald-700">Top Up Credits</p>
+                  <p className="mt-2 text-2xl font-extrabold text-emerald-700">+{creditsHistory.summary.topupCredits.toLocaleString()}</p>
+                  <p className="mt-1 text-xs text-emerald-700/80">API summary for paid credits matching the selected range and source.</p>
+                </div>
+                <div className="rounded-2xl border border-sky-200/70 bg-sky-50/70 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-sky-700">Signup Bonus</p>
+                  <p className="mt-2 text-2xl font-extrabold text-sky-700">+{creditsHistory.summary.signupCredits.toLocaleString()}</p>
+                  <p className="mt-1 text-xs text-sky-700/80">API summary for first-time activation credits.</p>
+                </div>
+                <div className="rounded-2xl border border-cyan-200/70 bg-cyan-50/70 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-cyan-700">Telegram Bonus</p>
+                  <p className="mt-2 text-2xl font-extrabold text-cyan-700">+{creditsHistory.summary.telegramCredits.toLocaleString()}</p>
+                  <p className="mt-1 text-xs text-cyan-700/80">API summary for Telegram bind bonuses and related credits.</p>
+                </div>
+                <div className="rounded-2xl border border-violet-200/70 bg-violet-50/70 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-violet-700">Referral Bonus</p>
+                  <p className="mt-2 text-2xl font-extrabold text-violet-700">+{creditsHistory.summary.referralCredits.toLocaleString()}</p>
+                  <p className="mt-1 text-xs text-violet-700/80">API summary for credits earned from successful referrals.</p>
+                </div>
+                <div className="rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/10 via-background to-background p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">API Filtered Net</p>
+                  <p className={`mt-2 text-2xl font-extrabold ${creditsHistory.summary.filteredCredits >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                    {formatSignedCredits(creditsHistory.summary.filteredCredits)}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">Net change returned by the credits history API for the selected server-side filters.</p>
+                </div>
+              </div>
+
+              {creditsHistoryError ? (
+                <p className="rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-700">{creditsHistoryError}</p>
+              ) : null}
+
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]">
+                <div className="rounded-3xl border bg-background/80 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold">Credits History Chart</p>
+                      <p className="text-xs text-muted-foreground">Green bars are additions, rose bars are deductions for the visible records.</p>
+                    </div>
+                    <span className="rounded-full border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
+                      {isCreditsHistoryLoading ? "Syncing..." : `${directionFilteredHistoryItems.length.toLocaleString()} entries`}
+                    </span>
+                  </div>
+
+                  <div className="h-[300px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={creditsHistoryChartData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(30 25% 88%)" />
+                        <XAxis dataKey="label" tick={{ fontSize: 12, fill: "hsl(20 10% 45%)" }} />
+                        <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "hsl(20 10% 45%)" }} />
+                        <Tooltip
+                          contentStyle={{
+                            background: "hsl(30 50% 98%)",
+                            border: "1px solid hsl(30 25% 88%)",
+                            borderRadius: "12px",
+                            fontSize: "13px",
+                          }}
+                          formatter={(value: number, name: string) => [
+                            formatSignedCredits(Number(value)),
+                            name === "positiveAmount" ? "Credits Added" : "Credits Deducted",
+                          ]}
+                          labelFormatter={(label: string, payload) =>
+                            payload?.[0]?.payload?.date ? `${label} · ${formatHistoryTimestamp(payload[0].payload.date)}` : label
+                          }
+                        />
+                        <Bar dataKey="positiveAmount" fill="hsl(142 71% 45%)" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="negativeAmount" fill="hsl(351 83% 61%)" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="rounded-3xl border bg-muted/30 p-5">
+                    <p className="text-sm font-semibold">Flow Summary</p>
+                    <div className="mt-4 space-y-3">
+                      <div className="flex items-center justify-between rounded-2xl bg-background px-4 py-3">
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <Wallet className="h-4 w-4 text-primary" />
+                          API Filtered Net
+                        </div>
+                        <span className={`text-sm font-bold ${creditsHistory.summary.filteredCredits >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                          {formatSignedCredits(creditsHistory.summary.filteredCredits)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-2xl bg-background px-4 py-3">
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <ArrowUpRight className="h-4 w-4 text-emerald-600" />
+                          Visible Credits Added
+                        </div>
+                        <span className="text-sm font-bold text-emerald-700">+{filteredHistoryAddedAmount.toLocaleString()}</span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-2xl bg-background px-4 py-3">
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <ArrowDownRight className="h-4 w-4 text-rose-600" />
+                          Visible Credits Deducted
+                        </div>
+                        <span className="text-sm font-bold text-rose-700">-{filteredHistoryDeductedAmount.toLocaleString()}</span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-2xl bg-background px-4 py-3">
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <Wallet className="h-4 w-4 text-primary" />
+                          Current Balance
+                        </div>
+                        <span className="text-sm font-bold">{creditsHistory.currentBalance.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-3xl border bg-muted/30 p-5">
+                    <p className="text-sm font-semibold">History Metadata</p>
+                    <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                      <span className="rounded-full border bg-background px-3 py-1">Range {appliedCreditsHistoryFilters.range}</span>
+                      <span className="rounded-full border bg-background px-3 py-1">
+                        Source {appliedCreditsHistoryFilters.source === "all" ? "all" : getHistorySourceLabel(appliedCreditsHistoryFilters.source)}
+                      </span>
+                      <span className="rounded-full border bg-background px-3 py-1">Page {creditsHistory.pagination.page}</span>
+                      <span className="rounded-full border bg-background px-3 py-1">Rows {creditsHistory.pagination.pageSize}</span>
+                      <span className="rounded-full border bg-background px-3 py-1">Direction {creditsDirection}</span>
+                      {creditsHistory.accountStatus ? <span className="rounded-full border bg-background px-3 py-1">Status {creditsHistory.accountStatus}</span> : null}
+                      {creditsHistory.apiKeyType ? <span className="rounded-full border bg-background px-3 py-1">API Key {creditsHistory.apiKeyType}</span> : null}
+                      {creditsHistory.twitterId ? <span className="rounded-full border bg-background px-3 py-1">Twitter ID {creditsHistory.twitterId}</span> : null}
+                      {creditsHistory.telegramId ? <span className="rounded-full border bg-background px-3 py-1">Telegram ID {creditsHistory.telegramId}</span> : null}
+                      <span className="rounded-full border bg-background px-3 py-1">
+                        Total Added {creditsHistory.summary.totalAddedCredits.toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-3xl border bg-background/80">
+                <div className="flex flex-col gap-2 border-b px-5 py-4 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold">Credits Events</p>
+                    <p className="text-xs text-muted-foreground">Use this ledger to inspect each top-up, signup reward, referral reward, or other balance change.</p>
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    Page {creditsHistory.pagination.page} of {Math.max(creditsHistory.pagination.totalPages, 1)}
+                  </span>
+                </div>
+
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Time</TableHead>
+                      <TableHead>Source</TableHead>
+                      <TableHead>Event</TableHead>
+                      <TableHead className="text-right">Change</TableHead>
+                      <TableHead className="text-right">Balance After</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {directionFilteredHistoryItems.length ? (
+                      directionFilteredHistoryItems.map((item, index) => (
+                        <TableRow key={`${item.createdAt}-${item.eventType}-${index}`}>
+                          <TableCell className="min-w-[160px] text-sm text-muted-foreground">{formatHistoryTimestamp(item.createdAt)}</TableCell>
+                          <TableCell>
+                            <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${getHistorySourceTone(item.source)}`}>
+                              {getHistorySourceLabel(item.source)}
+                            </span>
+                          </TableCell>
+                          <TableCell className="font-medium">{item.eventType || "Credit event"}</TableCell>
+                          <TableCell className={`text-right font-semibold ${item.amount >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                            {formatSignedCredits(item.amount)}
+                          </TableCell>
+                          <TableCell className="text-right font-medium">{item.balanceAfter.toLocaleString()}</TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
+                          {isCreditsHistoryLoading
+                            ? "Loading credits history..."
+                            : "No credits history matches the selected filters on this page."}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <p className="text-sm text-muted-foreground">
+                  {isCreditsHistoryLoading
+                    ? "Refreshing credits history..."
+                    : `Showing ${directionFilteredHistoryItems.length.toLocaleString()} visible entries on page ${creditsHistory.pagination.page} from ${creditsHistory.pagination.totalItems.toLocaleString()} total API-matched records.`}
+                </p>
+
+                <Pagination className="mx-0 w-auto justify-start md:justify-end">
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPrevious
+                        href="#"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          if (creditsHistory.pagination.page > 1 && !isCreditsHistoryLoading) {
+                            onCreditsHistoryPageChange(creditsHistory.pagination.page - 1);
+                          }
+                        }}
+                        className={creditsHistory.pagination.page <= 1 || isCreditsHistoryLoading ? "pointer-events-none opacity-50" : ""}
+                      />
+                    </PaginationItem>
+                    <PaginationItem>
+                      <span className="inline-flex h-9 items-center rounded-md border px-4 text-sm font-medium">
+                        {creditsHistory.pagination.page} / {Math.max(creditsHistory.pagination.totalPages, 1)}
+                      </span>
+                    </PaginationItem>
+                    <PaginationItem>
+                      <PaginationNext
+                        href="#"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          if (creditsHistory.pagination.hasNextPage && !isCreditsHistoryLoading) {
+                            onCreditsHistoryPageChange(creditsHistory.pagination.page + 1);
+                          }
+                        }}
+                        className={!creditsHistory.pagination.hasNextPage || isCreditsHistoryLoading ? "pointer-events-none opacity-50" : ""}
+                      />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
+              </div>
+            </TabsContent>
+          </Tabs>
         </motion.section>
 
       </main>

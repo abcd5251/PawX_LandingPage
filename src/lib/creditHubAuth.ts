@@ -14,6 +14,7 @@ export interface ApiKeyProfile {
   handle: string;
   avatar: string;
   profileUrl: string;
+  telegramId: string;
   baseCredits: number;
   telegramBonus: number;
   referralBonus: number;
@@ -104,10 +105,15 @@ export interface PaymentSession {
   status: PaymentSessionStatus;
   paid: boolean;
   createdAt: string;
-  expiresAt: string;
+  expiresAt: string | null;
   paidAt: string | null;
-  telegramId: string;
-  twitterId: string;
+  paymentId: string | null;
+  paymentMatched: boolean;
+  paymentRecordedAt: string | null;
+  paymentTxHash: string | null;
+  webhookReceived: boolean;
+  telegramId: string | null;
+  twitterId: string | null;
   creditsToAdd: number;
   redirectUrl: string;
   providerPrice: number;
@@ -116,10 +122,77 @@ export interface PaymentSession {
 
 export interface PaymentSessionStatusResult {
   id: string;
+  sessionId: string;
+  planId: PaymentPlanId;
   status: PaymentSessionStatus;
+  paid: boolean;
+  paidAt: string | null;
+  paymentId: string | null;
+  paymentMatched: boolean;
+  paymentRecordedAt: string | null;
+  paymentTxHash: string | null;
+  creditsToAdd: number;
+  telegramId: string | null;
+  twitterId: string | null;
+  webhookReceived: boolean;
 }
 
 export type UsageRange = "7d" | "30d";
+export type CreditHistoryRange = "7d" | "30d" | "all";
+export type CreditHistorySource = "all" | "topup" | "signup" | "referral" | "telegram";
+export type CreditHistoryItemSource = "topup" | "signup" | "referral" | "telegram" | "other";
+
+export interface GetCreditsHistoryQuery {
+  range?: CreditHistoryRange;
+  source?: CreditHistorySource;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface CreditsHistoryFilters {
+  page: number;
+  pageSize: number;
+  range: CreditHistoryRange;
+  source: CreditHistorySource;
+}
+
+export interface CreditsHistorySummary {
+  filteredCredits: number;
+  totalAddedCredits: number;
+  topupCredits: number;
+  signupCredits: number;
+  telegramCredits: number;
+  referralCredits: number;
+}
+
+export interface CreditsHistoryItem {
+  amount: number;
+  balanceAfter: number;
+  createdAt: string;
+  eventType: string;
+  source: CreditHistoryItemSource;
+}
+
+export interface CreditsHistoryPagination {
+  hasNextPage: boolean;
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+}
+
+export interface CreditsHistoryResponse {
+  apiKeyType: string;
+  twitterId: string;
+  telegramId: string;
+  accountStatus: string;
+  currentBalance: number;
+  filters: CreditsHistoryFilters;
+  summary: CreditsHistorySummary;
+  history: CreditsHistoryItem[];
+  items: CreditsHistoryItem[];
+  pagination: CreditsHistoryPagination;
+}
 
 export interface ApiUsageDay {
   date: string;
@@ -427,6 +500,25 @@ export const normalizeUsageRange = (value?: string): UsageRange => {
   return normalized === "30" || normalized === "30d" ? "30d" : "7d";
 };
 
+export const normalizeCreditHistoryRange = (value?: string): CreditHistoryRange => {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "7" || normalized === "7d") {
+    return "7d";
+  }
+  if (normalized === "all") {
+    return "all";
+  }
+  return "30d";
+};
+
+export const normalizeCreditHistorySource = (value?: string): CreditHistorySource => {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "topup" || normalized === "signup" || normalized === "referral" || normalized === "telegram") {
+    return normalized;
+  }
+  return "all";
+};
+
 const getUsageRangeDays = (range: UsageRange) => (range === "30d" ? 30 : 7);
 
 const normalizeUsageDate = (value: unknown) => {
@@ -467,6 +559,44 @@ export const buildEmptyApiUsage = (range: UsageRange): ApiUsageSeries => {
     })),
   };
 };
+
+export const buildEmptyCreditsHistory = (query: GetCreditsHistoryQuery = {}): CreditsHistoryResponse => {
+  const filters = {
+    page: Math.max(1, query.page ?? 1),
+    pageSize: Math.max(1, query.pageSize ?? 10),
+    range: normalizeCreditHistoryRange(query.range),
+    source: normalizeCreditHistorySource(query.source),
+  };
+
+  return {
+    apiKeyType: "",
+    twitterId: "",
+    telegramId: "",
+    accountStatus: "",
+    currentBalance: 0,
+    filters,
+    summary: {
+      filteredCredits: 0,
+      totalAddedCredits: 0,
+      topupCredits: 0,
+      signupCredits: 0,
+      telegramCredits: 0,
+      referralCredits: 0,
+    },
+    history: [],
+    items: [],
+    pagination: {
+      hasNextPage: false,
+      page: filters.page,
+      pageSize: filters.pageSize,
+      totalItems: 0,
+      totalPages: 0,
+    },
+  };
+};
+
+const sumCreditsHistoryBySource = (items: CreditsHistoryItem[], source: CreditHistoryItemSource) =>
+  items.filter((item) => item.source === source && item.amount > 0).reduce((sum, item) => sum + item.amount, 0);
 
 export const toApiUsageSeries = (payload: unknown, rawRange?: string): ApiUsageSeries => {
   const range = normalizeUsageRange(
@@ -541,6 +671,74 @@ export const toApiUsageSeries = (payload: unknown, rawRange?: string): ApiUsageS
     accountStatus: readString(payload, [["accountStatus"], ["status"], ["meta", "accountStatus"]]),
     currentBalance: readNumber(payload, [["currentBalance"], ["balance"], ["credits", "remaining"], ["meta", "currentBalance"]], 0),
     days,
+  };
+};
+
+const normalizeCreditHistoryItemSource = (value?: string): CreditHistoryItemSource => {
+  if (value === "topup" || value === "signup" || value === "referral") {
+    return value;
+  }
+  if (value === "telegram" || value === "telegram_bonus" || value === "telegram_bind_bonus" || value === "telegram_bind") {
+    return "telegram";
+  }
+  return "other";
+};
+
+export const toCreditsHistoryResponse = (payload: unknown, request: GetCreditsHistoryQuery = {}): CreditsHistoryResponse => {
+  const data = unwrapData(payload);
+  const filtersPayload = readPath(data, ["filters"]);
+  const summaryPayload = readPath(data, ["summary"]);
+  const paginationPayload = readPath(data, ["pagination"]);
+  const fallback = buildEmptyCreditsHistory(request);
+  const items = readArray(data, [["items"], ["history"]]).map((entry) => ({
+    amount: readNumber(entry, [["amount"], ["credits"], ["value"]], 0),
+    balanceAfter: readNumber(entry, [["balanceAfter"], ["balance_after"], ["currentBalance"]], 0),
+    createdAt: readString(entry, [["createdAt"], ["created_at"], ["timestamp"]]),
+    eventType: readString(entry, [["eventType"], ["event_type"], ["type"], ["event"], ["label"]], "Credit event"),
+    source: normalizeCreditHistoryItemSource(readString(entry, [["source"], ["category"]], "other")),
+  }));
+
+  const filters = {
+    page: Math.max(1, readNumber(filtersPayload, [["page"]], fallback.filters.page)),
+    pageSize: Math.max(1, readNumber(filtersPayload, [["pageSize"], ["limit"]], fallback.filters.pageSize)),
+    range: normalizeCreditHistoryRange(readString(filtersPayload, [["range"]], fallback.filters.range)),
+    source: normalizeCreditHistorySource(readString(filtersPayload, [["source"]], fallback.filters.source)),
+  };
+
+  const pagination = {
+    hasNextPage: readBoolean(paginationPayload, [["hasNextPage"]], false),
+    page: Math.max(1, readNumber(paginationPayload, [["page"]], filters.page)),
+    pageSize: Math.max(1, readNumber(paginationPayload, [["pageSize"], ["limit"]], filters.pageSize)),
+    totalItems: Math.max(0, readNumber(paginationPayload, [["totalItems"], ["count"]], items.length)),
+    totalPages: Math.max(0, readNumber(paginationPayload, [["totalPages"]], items.length ? 1 : 0)),
+  };
+
+  return {
+    apiKeyType: readString(data, [["apiKeyType"], ["meta", "apiKeyType"]]),
+    twitterId: readString(data, [["twitterId"], ["meta", "twitterId"]]),
+    telegramId: readString(data, [["telegramId"], ["meta", "telegramId"]]),
+    accountStatus: readString(data, [["accountStatus"], ["status"], ["meta", "accountStatus"]]),
+    currentBalance: readNumber(data, [["currentBalance"], ["balance"], ["credits", "remaining"]], 0),
+    filters,
+    summary: {
+      filteredCredits: readNumber(summaryPayload, [["filteredCredits"]], items.reduce((sum, item) => sum + item.amount, 0)),
+      totalAddedCredits: readNumber(
+        summaryPayload,
+        [["totalAddedCredits"]],
+        items.filter((item) => item.amount > 0).reduce((sum, item) => sum + item.amount, 0),
+      ),
+      topupCredits: readNumber(summaryPayload, [["topupCredits"]], sumCreditsHistoryBySource(items, "topup")),
+      signupCredits: readNumber(summaryPayload, [["signupCredits"]], sumCreditsHistoryBySource(items, "signup")),
+      telegramCredits: readNumber(
+        summaryPayload,
+        [["telegramCredits"], ["telegramBonusCredits"], ["telegramBindCredits"]],
+        sumCreditsHistoryBySource(items, "telegram"),
+      ),
+      referralCredits: readNumber(summaryPayload, [["referralCredits"]], sumCreditsHistoryBySource(items, "referral")),
+    },
+    history: items,
+    items,
+    pagination,
   };
 };
 
@@ -621,6 +819,7 @@ export const buildFallbackProfile = (sessionUser: XSessionUser): ApiKeyProfile =
   handle: sessionUser.handle,
   avatar: sessionUser.avatar,
   profileUrl: sessionUser.profileUrl,
+  telegramId: "",
   baseCredits: 0,
   telegramBonus: 0,
   referralBonus: 0,
@@ -675,6 +874,9 @@ export const toPaymentSession = (payload: unknown): PaymentSession => {
   const amount = readNumber(data, [["amount"]], readNumber(planPayload, [["amount"]], 0));
   const creditsToAdd = readNumber(data, [["creditsToAdd"]], readNumber(planPayload, [["credits"]], 0));
   const status = normalizePaymentSessionStatus(readString(data, [["status"], ["invoiceStatus"], ["paymentStatus"]], "pending"));
+  const paid = readBoolean(data, [["paid"]], status === "success");
+  const paymentMatched = readBoolean(data, [["paymentMatched"], ["matched"]], false);
+  const webhookReceived = readBoolean(data, [["webhookReceived"]], paymentMatched);
 
   return {
     id: readString(data, [["id"], ["sessionId"], ["customOrderId"]]),
@@ -689,12 +891,17 @@ export const toPaymentSession = (payload: unknown): PaymentSession => {
     qrCodeValue: readString(data, [["qrCodeValue"], ["qrCode"], ["checkoutUrl"]]),
     identifierInUsd: readString(data, [["identifierInUsd"], ["identifier"], ["invoiceIdentifier"]]),
     status,
-    paid: readBoolean(data, [["paid"]], status === "success"),
+    paid,
     createdAt: readString(data, [["createdAt"]]),
-    expiresAt: readString(data, [["expiresAt"]]),
+    expiresAt: readString(data, [["expiresAt"]]) || null,
     paidAt: readString(data, [["paidAt"]]) || null,
-    telegramId: readString(data, [["telegramId"]]),
-    twitterId: readString(data, [["twitterId"]]),
+    paymentId: readString(data, [["paymentId"]]) || null,
+    paymentMatched,
+    paymentRecordedAt: readString(data, [["paymentRecordedAt"]]) || null,
+    paymentTxHash: readString(data, [["paymentTxHash"], ["txHash"]]) || null,
+    webhookReceived,
+    telegramId: readString(data, [["telegramId"]]) || null,
+    twitterId: readString(data, [["twitterId"]]) || null,
     creditsToAdd,
     redirectUrl: readString(data, [["redirectUrl"]]),
     providerPrice: readNumber(data, [["providerPrice"]], amount),
@@ -704,10 +911,26 @@ export const toPaymentSession = (payload: unknown): PaymentSession => {
 
 export const toPaymentSessionStatusResult = (payload: unknown): PaymentSessionStatusResult => {
   const data = unwrapData(payload);
+  const sessionId = readString(data, [["sessionId"], ["id"]]);
+  const status = normalizePaymentSessionStatus(readString(data, [["status"], ["invoiceStatus"], ["paymentStatus"]], "pending"));
+  const paymentMatched = readBoolean(data, [["paymentMatched"], ["matched"]], false);
+  const webhookReceived = readBoolean(data, [["webhookReceived"]], paymentMatched);
 
   return {
-    id: readString(data, [["id"], ["sessionId"]]),
-    status: normalizePaymentSessionStatus(readString(data, [["status"], ["invoiceStatus"], ["paymentStatus"]], "pending")),
+    id: sessionId,
+    sessionId,
+    planId: normalizePaymentPlanId(readString(data, [["planId"], ["plan", "id"]], "Starter")),
+    status,
+    paid: readBoolean(data, [["paid"]], status === "success"),
+    paidAt: readString(data, [["paidAt"]]) || null,
+    paymentId: readString(data, [["paymentId"]]) || null,
+    paymentMatched,
+    paymentRecordedAt: readString(data, [["paymentRecordedAt"]]) || null,
+    paymentTxHash: readString(data, [["paymentTxHash"], ["txHash"]]) || null,
+    creditsToAdd: readNumber(data, [["creditsToAdd"]], 0),
+    telegramId: readString(data, [["telegramId"]]) || null,
+    twitterId: readString(data, [["twitterId"]]) || null,
+    webhookReceived,
   };
 };
 
@@ -878,6 +1101,7 @@ export const toApiKeyProfile = (sessionUser: XSessionUser, payload: unknown): Ap
     ["telegram", "userName"],
     ["telegram", "handle"],
   ]);
+  const telegramId = readString(payload, [["telegramId"], ["user", "telegramId"], ["telegram", "id"]]);
   const referralCode = readString(payload, [["referralCode"], ["user", "referralCode"], ["referral", "code"]]);
 
   return {
@@ -886,6 +1110,7 @@ export const toApiKeyProfile = (sessionUser: XSessionUser, payload: unknown): Ap
     handle,
     avatar,
     profileUrl,
+    telegramId,
     baseCredits,
     telegramBonus,
     referralBonus,
@@ -898,7 +1123,7 @@ export const toApiKeyProfile = (sessionUser: XSessionUser, payload: unknown): Ap
     telegramConnected: readBoolean(
       payload,
       [["telegramConnected"], ["telegramBound"], ["isTelegramBound"], ["user", "telegramConnected"], ["telegram", "connected"], ["telegram", "isBound"]],
-      Boolean(telegramUsername),
+      Boolean(telegramUsername || telegramId || telegramBonus > 0),
     ),
     telegramUsername,
     referralCode,
@@ -975,6 +1200,26 @@ export const fetchApiUsage = async (range: UsageRange) => {
   throw lastError;
 };
 
+export const fetchCreditsHistory = async (query: GetCreditsHistoryQuery = {}) => {
+  const normalizedQuery = {
+    page: Math.max(1, query.page ?? 1),
+    pageSize: Math.max(1, query.pageSize ?? 10),
+    range: normalizeCreditHistoryRange(query.range),
+    source: normalizeCreditHistorySource(query.source),
+  };
+  const searchParams = new URLSearchParams({
+    page: String(normalizedQuery.page),
+    pageSize: String(normalizedQuery.pageSize),
+    range: normalizedQuery.range,
+    source: normalizedQuery.source,
+  });
+  const payload = await apiRequest<unknown>(`/api/v1/twitterUsers/api-keys/credits-history?${searchParams.toString()}`, {
+    method: "GET",
+  });
+
+  return toCreditsHistoryResponse(payload, normalizedQuery);
+};
+
 export const createApiKey = async (sessionUser: XSessionUser, rotateExisting = false): Promise<ApiKeyMutationResult> => {
   const payload = await apiRequest<unknown>("/api/v1/twitterUsers/api-keys", {
     method: "POST",
@@ -1014,8 +1259,16 @@ export const createPaymentSession = async (request: CreatePaymentSessionRequest)
   return toPaymentSession(payload);
 };
 
-export const fetchPaymentSessionStatus = async (sessionId: string) => {
+export const fetchPaymentSession = async (sessionId: string) => {
   const payload = await apiRequest<unknown>(`/api/v1/payments/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "GET",
+  });
+
+  return toPaymentSession(payload);
+};
+
+export const fetchPaymentSessionStatus = async (sessionId: string) => {
+  const payload = await apiRequest<unknown>(`/api/v1/payments/sessions/${encodeURIComponent(sessionId)}/status`, {
     method: "GET",
   });
 

@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildEmptyCreditsHistory,
   clearStoredReferralCode,
   getAppBaseUrl,
   getStoredReferralCode,
   getApiBaseUrl,
   getPaymentReturnUrl,
   getXAuthorizationUrl,
+  normalizeCreditHistoryRange,
+  normalizeCreditHistorySource,
   normalizeUsageRange,
   persistReferralCodeFromUrl,
+  toCreditsHistoryResponse,
   toPaymentSession,
   toPaymentSessionStatusResult,
   toReferralCodeResolution,
@@ -171,6 +175,7 @@ describe("creditHubAuth", () => {
       handle: "@elonmusk",
       avatar: "https://example.com/profile.jpg",
       profileUrl: "https://x.com/elonmusk",
+      telegramId: "",
       baseCredits: 2500,
       telegramBonus: 1500,
       referralBonus: 500,
@@ -206,6 +211,7 @@ describe("creditHubAuth", () => {
       handle: "@elonmusk",
       avatar: "https://example.com/avatar.jpg",
       profileUrl: "https://x.com/elonmusk",
+      telegramId: "",
       baseCredits: 2500,
       telegramBonus: 0,
       referralBonus: 0,
@@ -241,6 +247,7 @@ describe("creditHubAuth", () => {
       handle: "@elonmusk",
       avatar: "https://example.com/avatar.jpg",
       profileUrl: "https://x.com/elonmusk",
+      telegramId: "",
       baseCredits: 2500,
       telegramBonus: 1500,
       referralBonus: 0,
@@ -256,6 +263,19 @@ describe("creditHubAuth", () => {
       referralCount: 0,
       statusLabel: "Signed in",
     });
+  });
+
+  it("treats telegram bonus or telegram id as linked even when telegramConnected is omitted", () => {
+    const profile = toApiKeyProfile(sessionUser, {
+      account: {
+        credits: 2500,
+        telegramCredits: 1500,
+      },
+      telegramId: "1162706985",
+    });
+
+    expect(profile.telegramId).toBe("1162706985");
+    expect(profile.telegramConnected).toBe(true);
   });
 
   it("maps snake_case profile fields from the api key payload", () => {
@@ -278,6 +298,7 @@ describe("creditHubAuth", () => {
       handle: "@allenpaper0915",
       avatar: "https://example.com/allen.jpg",
       profileUrl: "https://x.com/allenpaper0915",
+      telegramId: "",
       baseCredits: 2500,
       telegramBonus: 0,
       referralBonus: 0,
@@ -316,6 +337,11 @@ describe("creditHubAuth", () => {
         createdAt: "2026-04-07T00:00:00.000Z",
         expiresAt: "2026-04-07T00:30:00.000Z",
         paidAt: null,
+        paymentId: null,
+        paymentMatched: false,
+        paymentRecordedAt: null,
+        paymentTxHash: null,
+        webhookReceived: false,
         telegramId: "tg-123",
         twitterId: "x-123",
         creditsToAdd: 1000,
@@ -342,6 +368,11 @@ describe("creditHubAuth", () => {
       createdAt: "2026-04-07T00:00:00.000Z",
       expiresAt: "2026-04-07T00:30:00.000Z",
       paidAt: null,
+      paymentId: null,
+      paymentMatched: false,
+      paymentRecordedAt: null,
+      paymentTxHash: null,
+      webhookReceived: false,
       telegramId: "tg-123",
       twitterId: "x-123",
       creditsToAdd: 1000,
@@ -351,19 +382,42 @@ describe("creditHubAuth", () => {
     });
   });
 
-  it("maps payment status payloads returned from fetch session", () => {
+  it("maps payment status payloads returned from the polling endpoint", () => {
     const paymentStatus = toPaymentSessionStatusResult({
       code: 200,
-      message: "Payment session fetched",
+      message: "Payment session status fetched",
       data: {
-        id: "session-uuid",
+        sessionId: "session-uuid",
+        planId: "Starter",
         status: "success",
+        paid: true,
+        paidAt: "2026-04-07T00:02:00.000Z",
+        paymentId: "payment-uuid",
+        paymentMatched: true,
+        paymentRecordedAt: "2026-04-07T00:02:01.000Z",
+        paymentTxHash: "0xabc123",
+        creditsToAdd: 1000,
+        telegramId: "tg-123",
+        twitterId: "x-123",
+        webhookReceived: true,
       },
     });
 
     expect(paymentStatus).toEqual({
       id: "session-uuid",
+      sessionId: "session-uuid",
+      planId: "Starter",
       status: "success",
+      paid: true,
+      paidAt: "2026-04-07T00:02:00.000Z",
+      paymentId: "payment-uuid",
+      paymentMatched: true,
+      paymentRecordedAt: "2026-04-07T00:02:01.000Z",
+      paymentTxHash: "0xabc123",
+      creditsToAdd: 1000,
+      telegramId: "tg-123",
+      twitterId: "x-123",
+      webhookReceived: true,
     });
   });
 
@@ -422,6 +476,221 @@ describe("creditHubAuth", () => {
     expect(normalizeUsageRange("30")).toBe("30d");
     expect(normalizeUsageRange("30d")).toBe("30d");
     expect(normalizeUsageRange("unexpected")).toBe("7d");
+  });
+
+  it("normalizes supported credits history filters", () => {
+    expect(normalizeCreditHistoryRange("7")).toBe("7d");
+    expect(normalizeCreditHistoryRange("all")).toBe("all");
+    expect(normalizeCreditHistoryRange("unexpected")).toBe("30d");
+    expect(normalizeCreditHistorySource("topup")).toBe("topup");
+    expect(normalizeCreditHistorySource("referral")).toBe("referral");
+    expect(normalizeCreditHistorySource("unexpected")).toBe("all");
+  });
+
+  it("builds an empty credits history response with normalized filters", () => {
+    const history = buildEmptyCreditsHistory({
+      range: "all",
+      source: "topup",
+      page: 2,
+      pageSize: 20,
+    });
+
+    expect(history).toEqual({
+      apiKeyType: "",
+      twitterId: "",
+      telegramId: "",
+      accountStatus: "",
+      currentBalance: 0,
+      filters: {
+        range: "all",
+        source: "topup",
+        page: 2,
+        pageSize: 20,
+      },
+      summary: {
+        filteredCredits: 0,
+        totalAddedCredits: 0,
+        topupCredits: 0,
+        signupCredits: 0,
+        telegramCredits: 0,
+        referralCredits: 0,
+      },
+      history: [],
+      items: [],
+      pagination: {
+        hasNextPage: false,
+        page: 2,
+        pageSize: 20,
+        totalItems: 0,
+        totalPages: 0,
+      },
+    });
+  });
+
+  it("maps credits history payloads returned by the backend", () => {
+    const history = toCreditsHistoryResponse({
+      apiKeyType: "managed",
+      twitterId: "x-123",
+      telegramId: "tg-123",
+      accountStatus: "active",
+      currentBalance: 4900,
+      filters: {
+        page: 1,
+        pageSize: 10,
+        range: "30d",
+        source: "all",
+      },
+      summary: {
+        filteredCredits: 900,
+        totalAddedCredits: 1000,
+        topupCredits: 700,
+        signupCredits: 200,
+        telegramCredits: 0,
+        referralCredits: 100,
+      },
+      items: [
+        {
+          amount: 700,
+          balanceAfter: 4700,
+          createdAt: "2026-04-07T00:00:00.000Z",
+          eventType: "topup_completed",
+          source: "topup",
+        },
+        {
+          amount: -100,
+          balanceAfter: 4600,
+          createdAt: "2026-04-07T03:00:00.000Z",
+          eventType: "api_usage",
+          source: "other",
+        },
+      ],
+      pagination: {
+        hasNextPage: true,
+        page: 1,
+        pageSize: 10,
+        totalItems: 12,
+        totalPages: 2,
+      },
+    });
+
+    expect(history).toEqual({
+      apiKeyType: "managed",
+      twitterId: "x-123",
+      telegramId: "tg-123",
+      accountStatus: "active",
+      currentBalance: 4900,
+      filters: {
+        page: 1,
+        pageSize: 10,
+        range: "30d",
+        source: "all",
+      },
+      summary: {
+        filteredCredits: 900,
+        totalAddedCredits: 1000,
+        topupCredits: 700,
+        signupCredits: 200,
+        telegramCredits: 0,
+        referralCredits: 100,
+      },
+      history: [
+        {
+          amount: 700,
+          balanceAfter: 4700,
+          createdAt: "2026-04-07T00:00:00.000Z",
+          eventType: "topup_completed",
+          source: "topup",
+        },
+        {
+          amount: -100,
+          balanceAfter: 4600,
+          createdAt: "2026-04-07T03:00:00.000Z",
+          eventType: "api_usage",
+          source: "other",
+        },
+      ],
+      items: [
+        {
+          amount: 700,
+          balanceAfter: 4700,
+          createdAt: "2026-04-07T00:00:00.000Z",
+          eventType: "topup_completed",
+          source: "topup",
+        },
+        {
+          amount: -100,
+          balanceAfter: 4600,
+          createdAt: "2026-04-07T03:00:00.000Z",
+          eventType: "api_usage",
+          source: "other",
+        },
+      ],
+      pagination: {
+        hasNextPage: true,
+        page: 1,
+        pageSize: 10,
+        totalItems: 12,
+        totalPages: 2,
+      },
+    });
+  });
+
+  it("prefers snake_case event_type for telegram bind bonus history entries", () => {
+    const history = toCreditsHistoryResponse({
+      items: [
+        {
+          amount: 1500,
+          balanceAfter: 5500,
+          created_at: "2026-04-08T12:00:00.000Z",
+          event_type: "telegram_bind_bonus",
+          type: "topup",
+          source: "telegram_bind_bonus",
+        },
+      ],
+    });
+
+    expect(history.items).toEqual([
+      {
+        amount: 1500,
+        balanceAfter: 5500,
+        createdAt: "2026-04-08T12:00:00.000Z",
+        eventType: "telegram_bind_bonus",
+        source: "telegram",
+      },
+    ]);
+    expect(history.summary.telegramCredits).toBe(1500);
+    expect(history.filters.source).toBe("all");
+  });
+
+  it("normalizes telegram source filters and summary fields from the backend", () => {
+    const history = toCreditsHistoryResponse(
+      {
+        filters: {
+          range: "all",
+          source: "telegram",
+          page: 1,
+          pageSize: 10,
+        },
+        summary: {
+          filteredCredits: 1500,
+          totalAddedCredits: 1500,
+          telegramCredits: 1500,
+        },
+        items: [
+          {
+            amount: 1500,
+            balanceAfter: 5500,
+            createdAt: "2026-04-08T12:00:00.000Z",
+            eventType: "telegram_bind_bonus",
+            source: "telegram",
+          },
+        ],
+      },
+      { source: "telegram" },
+    );
+
+    expect(history.filters.source).toBe("telegram");
+    expect(history.summary.telegramCredits).toBe(1500);
   });
 
   it("maps usage payloads and fills missing days with zero values", () => {
