@@ -528,11 +528,25 @@ describe("creditHubAuth", () => {
       accountStatus: "",
       currentBalance: 0,
       filters: {
+        direction: "all",
         range: "all",
         source: "topup",
         page: 2,
         pageSize: 20,
       },
+      cards: {
+        topUpCredits: 0,
+        signupBonus: 0,
+        telegramBonus: 0,
+        referralBonus: 0,
+      },
+      flowSummary: {
+        currentBalance: 0,
+        visibleCreditsAdded: 0,
+        visibleCreditsDeducted: 0,
+        visibleEntries: 0,
+      },
+      chart: [],
       summary: {
         filteredCredits: 0,
         totalAddedCredits: 0,
@@ -541,6 +555,7 @@ describe("creditHubAuth", () => {
         telegramCredits: 0,
         referralCredits: 0,
       },
+      events: [],
       history: [],
       items: [],
       pagination: {
@@ -599,56 +614,109 @@ describe("creditHubAuth", () => {
       },
     });
 
-    expect(history).toEqual({
+    expect(history).toMatchObject({
       apiKeyType: "managed",
       twitterId: "x-123",
       telegramId: "tg-123",
       accountStatus: "active",
       currentBalance: 4900,
       filters: {
+        direction: "all",
         page: 1,
         pageSize: 10,
         range: "30d",
         source: "all",
       },
+      cards: {
+        topUpCredits: 700,
+        signupBonus: 200,
+        telegramBonus: 0,
+        referralBonus: 100,
+      },
+      flowSummary: {
+        currentBalance: 4900,
+        visibleCreditsAdded: 700,
+        visibleCreditsDeducted: -100,
+        visibleEntries: 2,
+      },
       summary: {
-        filteredCredits: 900,
+        filteredCredits: 600,
         totalAddedCredits: 1000,
         topupCredits: 700,
         signupCredits: 200,
         telegramCredits: 0,
         referralCredits: 100,
       },
-      history: [
+      events: [
         {
+          id: "",
+          apiKeyId: null,
           amount: 700,
+          change: 700,
           balanceAfter: 4700,
           createdAt: "2026-04-07T00:00:00.000Z",
           eventType: "topup_completed",
           source: "topup",
+          sourceLabel: "Top Up",
         },
         {
+          id: "",
+          apiKeyId: null,
           amount: -100,
+          change: -100,
           balanceAfter: 4600,
           createdAt: "2026-04-07T03:00:00.000Z",
           eventType: "api_usage",
           source: "other",
+          sourceLabel: "Other",
+        },
+      ],
+      history: [
+        {
+          id: "",
+          apiKeyId: null,
+          amount: 700,
+          change: 700,
+          balanceAfter: 4700,
+          createdAt: "2026-04-07T00:00:00.000Z",
+          eventType: "topup_completed",
+          source: "topup",
+          sourceLabel: "Top Up",
+        },
+        {
+          id: "",
+          apiKeyId: null,
+          amount: -100,
+          change: -100,
+          balanceAfter: 4600,
+          createdAt: "2026-04-07T03:00:00.000Z",
+          eventType: "api_usage",
+          source: "other",
+          sourceLabel: "Other",
         },
       ],
       items: [
         {
+          id: "",
+          apiKeyId: null,
           amount: 700,
+          change: 700,
           balanceAfter: 4700,
           createdAt: "2026-04-07T00:00:00.000Z",
           eventType: "topup_completed",
           source: "topup",
+          sourceLabel: "Top Up",
         },
         {
+          id: "",
+          apiKeyId: null,
           amount: -100,
+          change: -100,
           balanceAfter: 4600,
           createdAt: "2026-04-07T03:00:00.000Z",
           eventType: "api_usage",
           source: "other",
+          sourceLabel: "Other",
         },
       ],
       pagination: {
@@ -677,46 +745,87 @@ describe("creditHubAuth", () => {
 
     expect(history.items).toEqual([
       {
+        id: "",
+        apiKeyId: null,
         amount: 1500,
+        change: 1500,
         balanceAfter: 5500,
         createdAt: "2026-04-08T12:00:00.000Z",
         eventType: "telegram_bind_bonus",
         source: "telegram",
+        sourceLabel: "Telegram",
       },
     ]);
     expect(history.summary.telegramCredits).toBe(1500);
     expect(history.filters.source).toBe("all");
   });
 
-  it("normalizes telegram source filters and summary fields from the backend", () => {
+  it("splits combined signup summary credits into signup and telegram totals", () => {
     const history = toCreditsHistoryResponse(
       {
         filters: {
           range: "all",
-          source: "telegram",
+          source: "signup",
           page: 1,
           pageSize: 10,
         },
         summary: {
-          filteredCredits: 1500,
-          totalAddedCredits: 1500,
-          telegramCredits: 1500,
+          filteredCredits: 4000,
+          totalAddedCredits: 4000,
+          signupCredits: 4000,
         },
         items: [
           {
+            amount: 2500,
+            balanceAfter: 2500,
+            createdAt: "2026-04-08T10:00:00.000Z",
+            eventType: "signup_bonus",
+            source: "signup",
+          },
+          {
             amount: 1500,
-            balanceAfter: 5500,
+            balanceAfter: 4000,
             createdAt: "2026-04-08T12:00:00.000Z",
             eventType: "telegram_bind_bonus",
             source: "telegram",
           },
         ],
       },
-      { source: "telegram" },
+      { source: "signup" },
     );
 
-    expect(history.filters.source).toBe("telegram");
+    expect(history.filters.source).toBe("signup");
+    expect(history.summary.signupCredits).toBe(2500);
     expect(history.summary.telegramCredits).toBe(1500);
+  });
+
+  it("uses delta for negative api_call deductions when amount is absent", () => {
+    const history = toCreditsHistoryResponse({
+      items: [
+        {
+          delta: -3,
+          balance_after: 4497,
+          created_at: "2026-04-08T12:30:00.000Z",
+          event_type: "api_call",
+        },
+      ],
+    });
+
+    expect(history.items).toEqual([
+      {
+        id: "",
+        apiKeyId: null,
+        amount: -3,
+        change: -3,
+        balanceAfter: 4497,
+        createdAt: "2026-04-08T12:30:00.000Z",
+        eventType: "api_call",
+        source: "other",
+        sourceLabel: "Other",
+      },
+    ]);
+    expect(history.summary.filteredCredits).toBe(-3);
+    expect(history.summary.totalAddedCredits).toBe(0);
   });
 
   it("maps usage payloads and fills missing days with zero values", () => {

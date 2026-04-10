@@ -24,12 +24,14 @@ import {
   getReadableAuthError,
   getXAuthorizationUrl,
   logoutXSession,
+  normalizeCreditsDirection,
   normalizeCreditHistoryRange,
   normalizeCreditHistorySource,
   persistReferralCodeFromUrl,
   resolveReferralCode,
   type ApiKeyProfile,
   type ApiUsageSeries,
+  type CreditsDirection,
   type CreditsHistoryResponse,
   type CreditHistoryRange,
   type CreditHistorySource,
@@ -111,13 +113,12 @@ const getReadablePaymentError = (error: unknown, telegramConnected: boolean) => 
 };
 
 const DEFAULT_CREDITS_HISTORY_FILTERS: Required<GetCreditsHistoryQuery> = {
+  direction: "all",
   range: "30d",
   source: "all",
   page: 1,
-  pageSize: 10,
+  pageSize: 20,
 };
-
-const CREDIT_HISTORY_PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 
 const CreditHub = () => {
   const [sessionUser, setSessionUser] = useState<XSessionUser | null>(null);
@@ -1068,7 +1069,7 @@ const CreditHub = () => {
       creditsHistoryError={creditsHistoryError}
       creditsHistoryRange={creditsHistoryFilters.range}
       creditsHistorySource={creditsHistoryFilters.source}
-      creditsHistoryPageSize={creditsHistoryFilters.pageSize}
+      creditsHistoryDirection={creditsHistoryFilters.direction}
       isProfileLoading={isProfileLoading}
       isCreatingApiKey={isCreatingApiKey}
       isRotatingApiKey={isRotatingApiKey}
@@ -1110,21 +1111,19 @@ const CreditHub = () => {
           page: 1,
         }));
       }}
+      onCreditsHistoryDirectionChange={(direction: CreditsDirection) => {
+        const nextDirection = normalizeCreditsDirection(direction);
+        setCreditsHistoryFilters((current) => ({
+          ...current,
+          direction: nextDirection,
+          page: 1,
+        }));
+      }}
       onCreditsHistoryPageChange={(page: number) => {
         const nextPage = Number.isFinite(page) ? Math.max(1, Math.trunc(page)) : 1;
         setCreditsHistoryFilters((current) => ({
           ...current,
           page: nextPage,
-        }));
-      }}
-      onCreditsHistoryPageSizeChange={(pageSize: number) => {
-        const normalizedPageSize = CREDIT_HISTORY_PAGE_SIZE_OPTIONS.includes(pageSize as (typeof CREDIT_HISTORY_PAGE_SIZE_OPTIONS)[number])
-          ? pageSize
-          : DEFAULT_CREDITS_HISTORY_FILTERS.pageSize;
-        setCreditsHistoryFilters((current) => ({
-          ...current,
-          pageSize: normalizedPageSize,
-          page: 1,
         }));
       }}
       onCreateApiKey={() => {

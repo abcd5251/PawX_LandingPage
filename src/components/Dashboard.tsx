@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
   ApiKeyProfile,
   ApiUsageSeries,
+  CreditsDirection,
   CreditsHistoryResponse,
   CreditHistoryRange,
   CreditHistorySource,
@@ -39,7 +40,7 @@ interface DashboardProps {
   creditsHistoryError: string;
   creditsHistoryRange: CreditHistoryRange;
   creditsHistorySource: CreditHistorySource;
-  creditsHistoryPageSize: number;
+  creditsHistoryDirection: CreditsDirection;
   isProfileLoading: boolean;
   isCreatingApiKey: boolean;
   isRotatingApiKey: boolean;
@@ -58,8 +59,8 @@ interface DashboardProps {
   onUsageRangeChange: (value: UsageRange) => void;
   onCreditsHistoryRangeChange: (value: CreditHistoryRange) => void;
   onCreditsHistorySourceChange: (value: CreditHistorySource) => void;
+  onCreditsHistoryDirectionChange: (value: CreditsDirection) => void;
   onCreditsHistoryPageChange: (page: number) => void;
-  onCreditsHistoryPageSizeChange: (pageSize: number) => void;
   onCreateApiKey: () => void;
   onRotateApiKey: () => void;
   onBindTelegram: () => void;
@@ -133,7 +134,6 @@ const CUSTOM_PLAN = {
 } as const;
 
 type InsightsTab = "usage" | "history";
-type CreditsDirection = "all" | "added" | "deducted";
 
 const formatHistoryDate = (value: string) => {
   if (!value) {
@@ -236,7 +236,7 @@ const Dashboard = ({
   creditsHistoryError,
   creditsHistoryRange,
   creditsHistorySource,
-  creditsHistoryPageSize,
+  creditsHistoryDirection,
   isProfileLoading,
   isCreatingApiKey,
   isRotatingApiKey,
@@ -255,8 +255,8 @@ const Dashboard = ({
   onUsageRangeChange,
   onCreditsHistoryRangeChange,
   onCreditsHistorySourceChange,
+  onCreditsHistoryDirectionChange,
   onCreditsHistoryPageChange,
-  onCreditsHistoryPageSizeChange,
   onCreateApiKey,
   onRotateApiKey,
   onBindTelegram,
@@ -268,34 +268,36 @@ const Dashboard = ({
   const [copiedValue, setCopiedValue] = useState<"" | "key" | "handle" | "twitterId" | "referralCode" | "referralLink">("");
   const [selectedPaymentTokenId, setSelectedPaymentTokenId] = useState<(typeof PAYMENT_TOKEN_OPTIONS)[number]["id"]>(PAYMENT_TOKEN_OPTIONS[0].id);
   const [insightsTab, setInsightsTab] = useState<InsightsTab>("usage");
-  const [creditsDirection, setCreditsDirection] = useState<CreditsDirection>("all");
 
   const activeProfile = profile ?? {
     ...sessionUser,
     telegramId: "",
-    baseCredits: 0,
-    telegramBonus: 0,
-    referralBonus: 0,
-    totalCredits: 0,
-    creditsUsed: 0,
-    remainingCredits: 0,
+    baseCredits: creditsHistory.cards.topUpCredits + creditsHistory.cards.signupBonus,
+    telegramBonus: creditsHistory.cards.telegramBonus,
+    referralBonus: creditsHistory.cards.referralBonus,
+    totalCredits:
+      creditsHistory.cards.topUpCredits +
+      creditsHistory.cards.signupBonus +
+      creditsHistory.cards.telegramBonus +
+      creditsHistory.cards.referralBonus,
+    creditsUsed: Math.max(
+      creditsHistory.cards.topUpCredits +
+        creditsHistory.cards.signupBonus +
+        creditsHistory.cards.telegramBonus +
+        creditsHistory.cards.referralBonus -
+        creditsHistory.flowSummary.currentBalance,
+      0,
+    ),
+    remainingCredits: creditsHistory.flowSummary.currentBalance,
     hasActiveApiKey: false,
     apiKeyPreview: "",
     apiKeyLast4: "",
     telegramConnected: false,
     telegramUsername: "",
     referralCode: "",
-    referralCount: 0,
+    referralCount: referralProfile?.peopleReferred ?? 0,
     statusLabel: "Signed in",
   };
-
-  const usagePercent = useMemo(() => {
-    if (!activeProfile.totalCredits) {
-      return 0;
-    }
-
-    return Math.min((activeProfile.creditsUsed / activeProfile.totalCredits) * 100, 100);
-  }, [activeProfile.creditsUsed, activeProfile.totalCredits]);
 
   const referralLink = useMemo(() => {
     if (referralProfile?.referralLink) {
@@ -336,62 +338,79 @@ const Dashboard = ({
     return usage.totalCreditsUsed / usage.days.length;
   }, [usage.days.length, usage.totalCreditsUsed]);
 
-  const directionFilteredHistoryItems = useMemo(() => {
-    if (creditsDirection === "added") {
-      return creditsHistory.items.filter((item) => item.amount > 0);
-    }
-    if (creditsDirection === "deducted") {
-      return creditsHistory.items.filter((item) => item.amount < 0);
-    }
-    return creditsHistory.items;
-  }, [creditsDirection, creditsHistory.items]);
+  const balanceOverview = useMemo(() => {
+    const allocatedBaseCredits = Math.max(
+      creditsHistory.cards.topUpCredits + creditsHistory.cards.signupBonus,
+      activeProfile.baseCredits,
+    );
+    const telegramBonus = Math.max(creditsHistory.cards.telegramBonus, activeProfile.telegramBonus);
+    const referralBonus = Math.max(creditsHistory.cards.referralBonus, activeProfile.referralBonus, creditsEarned);
+    const totalCredits = Math.max(
+      allocatedBaseCredits + telegramBonus + referralBonus,
+      activeProfile.totalCredits,
+    );
+    const remainingCredits = Math.max(
+      creditsHistory.flowSummary.currentBalance,
+      creditsHistory.currentBalance,
+      activeProfile.remainingCredits,
+    );
+    const creditsUsed = Math.max(totalCredits - remainingCredits, activeProfile.creditsUsed, 0);
+    const baseCredits = Math.max(allocatedBaseCredits, totalCredits - telegramBonus - referralBonus, 0);
+    const referralCount = Math.max(activeProfile.referralCount, peopleReferred);
+    const usagePercent = totalCredits > 0 ? Math.min((creditsUsed / totalCredits) * 100, 100) : 0;
+
+    return {
+      baseCredits,
+      creditsUsed,
+      referralBonus,
+      referralCount,
+      remainingCredits,
+      telegramBonus,
+      totalCredits,
+      usagePercent,
+    };
+  }, [
+    activeProfile.baseCredits,
+    activeProfile.creditsUsed,
+    activeProfile.referralBonus,
+    activeProfile.referralCount,
+    activeProfile.remainingCredits,
+    activeProfile.telegramBonus,
+    activeProfile.totalCredits,
+    creditsHistory.cards.referralBonus,
+    creditsHistory.cards.signupBonus,
+    creditsHistory.cards.telegramBonus,
+    creditsHistory.cards.topUpCredits,
+    creditsEarned,
+    creditsHistory.currentBalance,
+    creditsHistory.flowSummary.currentBalance,
+    peopleReferred,
+  ]);
+
+  const creditsEventsItems = useMemo(
+    () =>
+      [...creditsHistory.events].sort(
+        (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+      ),
+    [creditsHistory.events],
+  );
 
   const creditsHistoryChartData = useMemo(() => {
-    const grouped = new Map<string, { date: string; label: string; positiveAmount: number; negativeAmount: number; events: number }>();
+    return [...creditsHistory.chart]
+      .map((entry) => ({
+        ...entry,
+        label: formatHistoryDate(entry.date),
+      }))
+      .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
+  }, [creditsHistory.chart]);
 
-    for (const item of directionFilteredHistoryItems) {
-      const label = formatHistoryDate(item.createdAt);
-      const existing = grouped.get(label) ?? {
-        date: item.createdAt,
-        label,
-        positiveAmount: 0,
-        negativeAmount: 0,
-        events: 0,
-      };
-
-      existing.date = item.createdAt;
-      if (item.amount >= 0) {
-        existing.positiveAmount += item.amount;
-      } else {
-        existing.negativeAmount += item.amount;
-      }
-      existing.events += 1;
-      grouped.set(label, existing);
-    }
-
-    return Array.from(grouped.values()).sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
-  }, [directionFilteredHistoryItems]);
-
-  const filteredHistoryNetAmount = useMemo(
-    () => directionFilteredHistoryItems.reduce((sum, item) => sum + item.amount, 0),
-    [directionFilteredHistoryItems],
-  );
-
-  const filteredHistoryAddedAmount = useMemo(
-    () => directionFilteredHistoryItems.filter((item) => item.amount > 0).reduce((sum, item) => sum + item.amount, 0),
-    [directionFilteredHistoryItems],
-  );
-
-  const filteredHistoryDeductedAmount = useMemo(
-    () => directionFilteredHistoryItems.filter((item) => item.amount < 0).reduce((sum, item) => sum + Math.abs(item.amount), 0),
-    [directionFilteredHistoryItems],
-  );
+  const filteredHistoryAddedAmount = creditsHistory.flowSummary.visibleCreditsAdded;
+  const filteredHistoryDeductedAmount = Math.abs(creditsHistory.flowSummary.visibleCreditsDeducted);
 
   const selectedPaymentToken = useMemo(
     () => PAYMENT_TOKEN_OPTIONS.find((option) => option.id === selectedPaymentTokenId) ?? PAYMENT_TOKEN_OPTIONS[0],
     [selectedPaymentTokenId],
   );
-  const appliedCreditsHistoryFilters = creditsHistory.filters;
   const activePaymentSessionId = paymentStatus?.sessionId || paymentStatus?.id || paymentSession?.id || "";
   const activePaymentState = paymentStatus?.status || paymentSession?.status || null;
   const activePaymentCheckoutUrl = paymentSession?.checkoutUrl || "";
@@ -538,11 +557,9 @@ const Dashboard = ({
                   <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Credit Balance</p>
-                    <p className="mt-3 text-5xl font-extrabold leading-none md:text-6xl xl:text-7xl">
-                      {activeProfile.remainingCredits.toLocaleString()}
-                    </p>
+                    <p className="mt-3 text-5xl font-extrabold leading-none md:text-6xl xl:text-7xl">{balanceOverview.remainingCredits.toLocaleString()}</p>
                     <p className="mt-3 max-w-md text-base text-muted-foreground">
-                      Remaining credits / {activeProfile.totalCredits.toLocaleString()} total allocated credits
+                      Remaining credits / {balanceOverview.totalCredits.toLocaleString()} total allocated credits
                     </p>
                     <div className="mt-4 flex flex-wrap gap-2 text-sm text-muted-foreground">
                       <span className="rounded-full border bg-background px-3 py-1">{activeProfile.statusLabel}</span>
@@ -558,25 +575,29 @@ const Dashboard = ({
 
                     <div className="w-full max-w-lg space-y-4">
                       <div className="space-y-2">
-                      <div className="flex justify-between text-xs text-muted-foreground">
-                        <span>Used {activeProfile.creditsUsed.toLocaleString()}</span>
-                        <span>{usagePercent.toFixed(1)}%</span>
+                        <div className="flex justify-between text-xs text-muted-foreground">
+                          <span>Used {balanceOverview.creditsUsed.toLocaleString()}</span>
+                          <span>{balanceOverview.usagePercent.toFixed(1)}%</span>
+                        </div>
+                        <div className="h-3 overflow-hidden rounded-full bg-muted">
+                          <motion.div
+                            className="h-full rounded-full bg-gradient-to-r from-orange-500 to-amber-400"
+                            initial={{ width: 0 }}
+                            animate={{ width: `${balanceOverview.usagePercent}%` }}
+                            transition={{ duration: 0.7, ease: "easeOut" }}
+                          />
+                        </div>
+                        <div className="flex justify-between text-xs text-muted-foreground">
+                          <span>Current {balanceOverview.remainingCredits.toLocaleString()}</span>
+                          <span>Total {balanceOverview.totalCredits.toLocaleString()}</span>
+                        </div>
                       </div>
-                      <div className="h-3 overflow-hidden rounded-full bg-muted">
-                        <motion.div
-                          className="h-full rounded-full bg-gradient-to-r from-orange-500 to-amber-400"
-                          initial={{ width: 0 }}
-                          animate={{ width: `${usagePercent}%` }}
-                          transition={{ duration: 0.7, ease: "easeOut" }}
-                        />
-                      </div>
-                    </div>
                       <div className="grid grid-cols-2 gap-3">
                         {[
-                          { label: "Base Credits", value: activeProfile.baseCredits },
-                          { label: "Telegram Bonus", value: activeProfile.telegramBonus },
-                          { label: "Referral Bonus", value: activeProfile.referralBonus },
-                          { label: "Referral Count", value: activeProfile.referralCount },
+                          { label: "Base Credits", value: balanceOverview.baseCredits },
+                          { label: "Telegram Bonus", value: balanceOverview.telegramBonus },
+                          { label: "Referral Bonus", value: balanceOverview.referralBonus },
+                          { label: "Referral Count", value: balanceOverview.referralCount },
                         ].map((item) => (
                           <div key={item.label} className="rounded-2xl border bg-muted/40 p-4">
                             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{item.label}</p>
@@ -1301,7 +1322,7 @@ const Dashboard = ({
                   <p className="text-sm text-muted-foreground">Review each credit addition or deduction, with separate visual focus for inflows and outflows.</p>
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   <div className="min-w-[140px]">
                     <p className="mb-1 flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       <Filter className="h-3.5 w-3.5" />
@@ -1331,27 +1352,14 @@ const Dashboard = ({
                         <SelectItem value="signup">Signup bonus</SelectItem>
                         <SelectItem value="telegram">Telegram bonus</SelectItem>
                         <SelectItem value="referral">Referral bonus</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
 
-                  <div className="min-w-[140px]">
-                    <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Rows</p>
-                    <Select value={String(creditsHistoryPageSize)} onValueChange={(value) => onCreditsHistoryPageSizeChange(Number(value))}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="10">10 rows</SelectItem>
-                        <SelectItem value="20">20 rows</SelectItem>
-                        <SelectItem value="50">50 rows</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="min-w-[160px]">
+                  <div className="min-w-[180px]">
                     <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Direction</p>
-                    <div className="flex items-center gap-1 rounded-xl bg-muted/50 p-1">
+                    <div className="grid grid-cols-3 gap-1 rounded-xl bg-muted/50 p-1">
                       {([
                         { value: "all", label: "All" },
                         { value: "added", label: "Added" },
@@ -1360,10 +1368,10 @@ const Dashboard = ({
                         <Button
                           key={option.value}
                           type="button"
-                          variant={creditsDirection === option.value ? "default" : "ghost"}
+                          variant={creditsHistoryDirection === option.value ? "default" : "ghost"}
                           size="sm"
-                          className="flex-1"
-                          onClick={() => setCreditsDirection(option.value)}
+                          className="min-w-0 px-3 text-xs sm:text-sm"
+                          onClick={() => onCreditsHistoryDirectionChange(option.value)}
                         >
                           {option.label}
                         </Button>
@@ -1373,33 +1381,26 @@ const Dashboard = ({
                 </div>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-                <div className="rounded-2xl border border-emerald-200/70 bg-emerald-50/70 p-4">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-2xl border border-emerald-200/70 bg-emerald-50/70 p-5">
                   <p className="text-xs font-medium uppercase tracking-wide text-emerald-700">Top Up Credits</p>
-                  <p className="mt-2 text-2xl font-extrabold text-emerald-700">+{creditsHistory.summary.topupCredits.toLocaleString()}</p>
+                  <p className="mt-2 text-3xl font-extrabold text-emerald-700">+{creditsHistory.cards.topUpCredits.toLocaleString()}</p>
                   <p className="mt-1 text-xs text-emerald-700/80">API summary for paid credits matching the selected range and source.</p>
                 </div>
-                <div className="rounded-2xl border border-sky-200/70 bg-sky-50/70 p-4">
+                <div className="rounded-2xl border border-sky-200/70 bg-sky-50/70 p-5">
                   <p className="text-xs font-medium uppercase tracking-wide text-sky-700">Signup Bonus</p>
-                  <p className="mt-2 text-2xl font-extrabold text-sky-700">+{creditsHistory.summary.signupCredits.toLocaleString()}</p>
+                  <p className="mt-2 text-3xl font-extrabold text-sky-700">+{creditsHistory.cards.signupBonus.toLocaleString()}</p>
                   <p className="mt-1 text-xs text-sky-700/80">API summary for first-time activation credits.</p>
                 </div>
-                <div className="rounded-2xl border border-cyan-200/70 bg-cyan-50/70 p-4">
+                <div className="rounded-2xl border border-cyan-200/70 bg-cyan-50/70 p-5">
                   <p className="text-xs font-medium uppercase tracking-wide text-cyan-700">Telegram Bonus</p>
-                  <p className="mt-2 text-2xl font-extrabold text-cyan-700">+{creditsHistory.summary.telegramCredits.toLocaleString()}</p>
+                  <p className="mt-2 text-3xl font-extrabold text-cyan-700">+{creditsHistory.cards.telegramBonus.toLocaleString()}</p>
                   <p className="mt-1 text-xs text-cyan-700/80">API summary for Telegram bind bonuses and related credits.</p>
                 </div>
-                <div className="rounded-2xl border border-violet-200/70 bg-violet-50/70 p-4">
+                <div className="rounded-2xl border border-violet-200/70 bg-violet-50/70 p-5">
                   <p className="text-xs font-medium uppercase tracking-wide text-violet-700">Referral Bonus</p>
-                  <p className="mt-2 text-2xl font-extrabold text-violet-700">+{creditsHistory.summary.referralCredits.toLocaleString()}</p>
+                  <p className="mt-2 text-3xl font-extrabold text-violet-700">+{creditsHistory.cards.referralBonus.toLocaleString()}</p>
                   <p className="mt-1 text-xs text-violet-700/80">API summary for credits earned from successful referrals.</p>
-                </div>
-                <div className="rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/10 via-background to-background p-4">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">API Filtered Net</p>
-                  <p className={`mt-2 text-2xl font-extrabold ${creditsHistory.summary.filteredCredits >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                    {formatSignedCredits(creditsHistory.summary.filteredCredits)}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">Net change returned by the credits history API for the selected server-side filters.</p>
                 </div>
               </div>
 
@@ -1415,7 +1416,7 @@ const Dashboard = ({
                       <p className="text-xs text-muted-foreground">Green bars are additions, rose bars are deductions for the visible records.</p>
                     </div>
                     <span className="rounded-full border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
-                      {isCreditsHistoryLoading ? "Syncing..." : `${directionFilteredHistoryItems.length.toLocaleString()} entries`}
+                      {isCreditsHistoryLoading ? "Syncing..." : `${creditsEventsItems.length.toLocaleString()} entries`}
                     </span>
                   </div>
 
@@ -1434,32 +1435,23 @@ const Dashboard = ({
                           }}
                           formatter={(value: number, name: string) => [
                             formatSignedCredits(Number(value)),
-                            name === "positiveAmount" ? "Credits Added" : "Credits Deducted",
+                            name === "addedCredits" ? "Credits Added" : "Credits Deducted",
                           ]}
                           labelFormatter={(label: string, payload) =>
                             payload?.[0]?.payload?.date ? `${label} · ${formatHistoryTimestamp(payload[0].payload.date)}` : label
                           }
                         />
-                        <Bar dataKey="positiveAmount" fill="hsl(142 71% 45%)" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="negativeAmount" fill="hsl(351 83% 61%)" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="addedCredits" fill="hsl(142 71% 45%)" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="deductedCredits" fill="hsl(351 83% 61%)" radius={[6, 6, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
 
-                <div className="space-y-4">
-                  <div className="rounded-3xl border bg-muted/30 p-5">
+                <div>
+                  <div className="rounded-3xl border bg-muted/30 p-5 min-h-[380px]">
                     <p className="text-sm font-semibold">Flow Summary</p>
                     <div className="mt-4 space-y-3">
-                      <div className="flex items-center justify-between rounded-2xl bg-background px-4 py-3">
-                        <div className="flex items-center gap-2 text-sm font-medium">
-                          <Wallet className="h-4 w-4 text-primary" />
-                          API Filtered Net
-                        </div>
-                        <span className={`text-sm font-bold ${creditsHistory.summary.filteredCredits >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                          {formatSignedCredits(creditsHistory.summary.filteredCredits)}
-                        </span>
-                      </div>
                       <div className="flex items-center justify-between rounded-2xl bg-background px-4 py-3">
                         <div className="flex items-center gap-2 text-sm font-medium">
                           <ArrowUpRight className="h-4 w-4 text-emerald-600" />
@@ -1481,26 +1473,13 @@ const Dashboard = ({
                         </div>
                         <span className="text-sm font-bold">{creditsHistory.currentBalance.toLocaleString()}</span>
                       </div>
-                    </div>
-                  </div>
-
-                  <div className="rounded-3xl border bg-muted/30 p-5">
-                    <p className="text-sm font-semibold">History Metadata</p>
-                    <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                      <span className="rounded-full border bg-background px-3 py-1">Range {appliedCreditsHistoryFilters.range}</span>
-                      <span className="rounded-full border bg-background px-3 py-1">
-                        Source {appliedCreditsHistoryFilters.source === "all" ? "all" : getHistorySourceLabel(appliedCreditsHistoryFilters.source)}
-                      </span>
-                      <span className="rounded-full border bg-background px-3 py-1">Page {creditsHistory.pagination.page}</span>
-                      <span className="rounded-full border bg-background px-3 py-1">Rows {creditsHistory.pagination.pageSize}</span>
-                      <span className="rounded-full border bg-background px-3 py-1">Direction {creditsDirection}</span>
-                      {creditsHistory.accountStatus ? <span className="rounded-full border bg-background px-3 py-1">Status {creditsHistory.accountStatus}</span> : null}
-                      {creditsHistory.apiKeyType ? <span className="rounded-full border bg-background px-3 py-1">API Key {creditsHistory.apiKeyType}</span> : null}
-                      {creditsHistory.twitterId ? <span className="rounded-full border bg-background px-3 py-1">Twitter ID {creditsHistory.twitterId}</span> : null}
-                      {creditsHistory.telegramId ? <span className="rounded-full border bg-background px-3 py-1">Telegram ID {creditsHistory.telegramId}</span> : null}
-                      <span className="rounded-full border bg-background px-3 py-1">
-                        Total Added {creditsHistory.summary.totalAddedCredits.toLocaleString()}
-                      </span>
+                      <div className="flex items-center justify-between rounded-2xl bg-background px-4 py-3">
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <BarChart3 className="h-4 w-4 text-primary" />
+                          Visible Entries
+                        </div>
+                        <span className="text-sm font-bold">{creditsHistory.flowSummary.visibleEntries.toLocaleString()}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1510,7 +1489,7 @@ const Dashboard = ({
                 <div className="flex flex-col gap-2 border-b px-5 py-4 md:flex-row md:items-center md:justify-between">
                   <div>
                     <p className="text-sm font-semibold">Credits Events</p>
-                    <p className="text-xs text-muted-foreground">Use this ledger to inspect each top-up, signup reward, referral reward, or other balance change.</p>
+                    <p className="text-xs text-muted-foreground">Use this ledger to inspect each top-up, signup reward, Telegram bonus, referral reward, or API call deduction.</p>
                   </div>
                   <span className="text-xs text-muted-foreground">
                     Page {creditsHistory.pagination.page} of {Math.max(creditsHistory.pagination.totalPages, 1)}
@@ -1528,13 +1507,13 @@ const Dashboard = ({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {directionFilteredHistoryItems.length ? (
-                      directionFilteredHistoryItems.map((item, index) => (
+                    {creditsEventsItems.length ? (
+                      creditsEventsItems.map((item, index) => (
                         <TableRow key={`${item.createdAt}-${item.eventType}-${index}`}>
                           <TableCell className="min-w-[160px] text-sm text-muted-foreground">{formatHistoryTimestamp(item.createdAt)}</TableCell>
                           <TableCell>
                             <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${getHistorySourceTone(item.source)}`}>
-                              {getHistorySourceLabel(item.source)}
+                              {item.sourceLabel || getHistorySourceLabel(item.source)}
                             </span>
                           </TableCell>
                           <TableCell className="font-medium">{item.eventType || "Credit event"}</TableCell>
@@ -1561,7 +1540,7 @@ const Dashboard = ({
                 <p className="text-sm text-muted-foreground">
                   {isCreditsHistoryLoading
                     ? "Refreshing credits history..."
-                    : `Showing ${directionFilteredHistoryItems.length.toLocaleString()} visible entries on page ${creditsHistory.pagination.page} from ${creditsHistory.pagination.totalItems.toLocaleString()} total API-matched records.`}
+                    : `Showing ${creditsEventsItems.length.toLocaleString()} visible entries on page ${creditsHistory.pagination.page} from ${creditsHistory.pagination.totalItems.toLocaleString()} API records.`}
                 </p>
 
                 <Pagination className="mx-0 w-auto justify-start md:justify-end">

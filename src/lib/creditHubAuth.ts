@@ -162,21 +162,46 @@ export interface PaymentSessionStatusResult {
 
 export type UsageRange = "7d" | "30d";
 export type CreditHistoryRange = "7d" | "30d" | "all";
-export type CreditHistorySource = "all" | "topup" | "signup" | "referral" | "telegram";
+export type CreditHistorySource = "all" | "topup" | "signup" | "telegram" | "referral" | "other";
 export type CreditHistoryItemSource = "topup" | "signup" | "referral" | "telegram" | "other";
+export type CreditsDirection = "all" | "added" | "deducted";
 
 export interface GetCreditsHistoryQuery {
   range?: CreditHistoryRange;
   source?: CreditHistorySource;
+  direction?: CreditsDirection;
   page?: number;
   pageSize?: number;
 }
 
 export interface CreditsHistoryFilters {
+  direction: CreditsDirection;
   page: number;
   pageSize: number;
   range: CreditHistoryRange;
   source: CreditHistorySource;
+}
+
+export interface CreditsHistoryCards {
+  topUpCredits: number;
+  signupBonus: number;
+  telegramBonus: number;
+  referralBonus: number;
+}
+
+export interface CreditsHistoryFlowSummary {
+  currentBalance: number;
+  visibleCreditsAdded: number;
+  visibleCreditsDeducted: number;
+  visibleEntries: number;
+}
+
+export interface CreditsHistoryChartEntry {
+  date: string;
+  addedCredits: number;
+  deductedCredits: number;
+  netCredits: number;
+  entryCount: number;
 }
 
 export interface CreditsHistorySummary {
@@ -189,11 +214,15 @@ export interface CreditsHistorySummary {
 }
 
 export interface CreditsHistoryItem {
+  id: string;
+  apiKeyId: string | null;
   amount: number;
+  change: number;
   balanceAfter: number;
   createdAt: string;
   eventType: string;
   source: CreditHistoryItemSource;
+  sourceLabel: string;
 }
 
 export interface CreditsHistoryPagination {
@@ -211,7 +240,11 @@ export interface CreditsHistoryResponse {
   accountStatus: string;
   currentBalance: number;
   filters: CreditsHistoryFilters;
+  cards: CreditsHistoryCards;
+  flowSummary: CreditsHistoryFlowSummary;
+  chart: CreditsHistoryChartEntry[];
   summary: CreditsHistorySummary;
+  events: CreditsHistoryItem[];
   history: CreditsHistoryItem[];
   items: CreditsHistoryItem[];
   pagination: CreditsHistoryPagination;
@@ -298,6 +331,11 @@ const pickFirst = (source: unknown, paths: string[][]) => {
   return undefined;
 };
 
+const hasPathValue = (source: unknown, path: string[]) => {
+  const value = readPath(source, path);
+  return value !== undefined && value !== null && value !== "";
+};
+
 const readArray = (source: unknown, paths: string[][]) => {
   for (const path of paths) {
     const value = readPath(source, path);
@@ -318,6 +356,20 @@ const readString = (source: unknown, paths: string[][], fallback = "") => {
     return String(value);
   }
   return fallback;
+};
+
+const readNullableString = (source: unknown, paths: string[][]) => {
+  const value = pickFirst(source, paths);
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return String(value);
+  }
+  return null;
 };
 
 const readNumber = (source: unknown, paths: string[][], fallback = 0) => {
@@ -536,7 +588,15 @@ export const normalizeCreditHistoryRange = (value?: string): CreditHistoryRange 
 
 export const normalizeCreditHistorySource = (value?: string): CreditHistorySource => {
   const normalized = value?.trim().toLowerCase();
-  if (normalized === "topup" || normalized === "signup" || normalized === "referral" || normalized === "telegram") {
+  if (normalized === "topup" || normalized === "signup" || normalized === "telegram" || normalized === "referral" || normalized === "other") {
+    return normalized;
+  }
+  return "all";
+};
+
+export const normalizeCreditsDirection = (value?: string): CreditsDirection => {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "added" || normalized === "deducted") {
     return normalized;
   }
   return "all";
@@ -585,6 +645,7 @@ export const buildEmptyApiUsage = (range: UsageRange): ApiUsageSeries => {
 
 export const buildEmptyCreditsHistory = (query: GetCreditsHistoryQuery = {}): CreditsHistoryResponse => {
   const filters = {
+    direction: normalizeCreditsDirection(query.direction),
     page: Math.max(1, query.page ?? 1),
     pageSize: Math.max(1, query.pageSize ?? 10),
     range: normalizeCreditHistoryRange(query.range),
@@ -598,6 +659,19 @@ export const buildEmptyCreditsHistory = (query: GetCreditsHistoryQuery = {}): Cr
     accountStatus: "",
     currentBalance: 0,
     filters,
+    cards: {
+      topUpCredits: 0,
+      signupBonus: 0,
+      telegramBonus: 0,
+      referralBonus: 0,
+    },
+    flowSummary: {
+      currentBalance: 0,
+      visibleCreditsAdded: 0,
+      visibleCreditsDeducted: 0,
+      visibleEntries: 0,
+    },
+    chart: [],
     summary: {
       filteredCredits: 0,
       totalAddedCredits: 0,
@@ -606,6 +680,7 @@ export const buildEmptyCreditsHistory = (query: GetCreditsHistoryQuery = {}): Cr
       telegramCredits: 0,
       referralCredits: 0,
     },
+    events: [],
     history: [],
     items: [],
     pagination: {
@@ -620,6 +695,22 @@ export const buildEmptyCreditsHistory = (query: GetCreditsHistoryQuery = {}): Cr
 
 const sumCreditsHistoryBySource = (items: CreditsHistoryItem[], source: CreditHistoryItemSource) =>
   items.filter((item) => item.source === source && item.amount > 0).reduce((sum, item) => sum + item.amount, 0);
+
+const getCreditHistorySourceLabel = (value: CreditHistoryItemSource) => {
+  if (value === "topup") {
+    return "Top Up";
+  }
+  if (value === "signup") {
+    return "Signup";
+  }
+  if (value === "telegram") {
+    return "Telegram";
+  }
+  if (value === "referral") {
+    return "Referral";
+  }
+  return "Other";
+};
 
 export const toApiUsageSeries = (payload: unknown, rawRange?: string): ApiUsageSeries => {
   const range = normalizeUsageRange(
@@ -697,9 +788,26 @@ export const toApiUsageSeries = (payload: unknown, rawRange?: string): ApiUsageS
   };
 };
 
-const normalizeCreditHistoryItemSource = (value?: string): CreditHistoryItemSource => {
-  if (value === "topup" || value === "signup" || value === "referral") {
+const normalizeCreditHistoryItemSource = (value?: string, eventType?: string): CreditHistoryItemSource => {
+  if (eventType === "telegram_bind_bonus") {
+    return "telegram";
+  }
+  if (eventType === "signup_bonus") {
+    return "signup";
+  }
+  if (eventType === "referral_bonus") {
+    return "referral";
+  }
+  if (value === "signup" || value === "referral") {
     return value;
+  }
+  if (
+    value === "topup" ||
+    value === "starter_topup" ||
+    value === "standard_topup" ||
+    value === "advanced_topup"
+  ) {
+    return "topup";
   }
   if (value === "telegram" || value === "telegram_bonus" || value === "telegram_bind_bonus" || value === "telegram_bind") {
     return "telegram";
@@ -710,18 +818,30 @@ const normalizeCreditHistoryItemSource = (value?: string): CreditHistoryItemSour
 export const toCreditsHistoryResponse = (payload: unknown, request: GetCreditsHistoryQuery = {}): CreditsHistoryResponse => {
   const data = unwrapData(payload);
   const filtersPayload = readPath(data, ["filters"]);
+  const cardsPayload = readPath(data, ["cards"]);
+  const flowSummaryPayload = readPath(data, ["flowSummary"]);
   const summaryPayload = readPath(data, ["summary"]);
   const paginationPayload = readPath(data, ["pagination"]);
   const fallback = buildEmptyCreditsHistory(request);
-  const items = readArray(data, [["items"], ["history"]]).map((entry) => ({
-    amount: readNumber(entry, [["amount"], ["credits"], ["value"]], 0),
-    balanceAfter: readNumber(entry, [["balanceAfter"], ["balance_after"], ["currentBalance"]], 0),
-    createdAt: readString(entry, [["createdAt"], ["created_at"], ["timestamp"]]),
-    eventType: readString(entry, [["eventType"], ["event_type"], ["type"], ["event"], ["label"]], "Credit event"),
-    source: normalizeCreditHistoryItemSource(readString(entry, [["source"], ["category"]], "other")),
-  }));
+  const items = readArray(data, [["events"], ["items"], ["history"]]).map((entry) => {
+    const eventType = readString(entry, [["eventType"], ["event_type"], ["type"], ["event"], ["label"]], "Credit event");
+    const source = normalizeCreditHistoryItemSource(readString(entry, [["source"], ["category"]], "other"), eventType);
+    const change = readNumber(entry, [["change"], ["amount"], ["credits"], ["value"], ["delta"]], 0);
+    return {
+      id: readString(entry, [["id"]]),
+      apiKeyId: readNullableString(entry, [["apiKeyId"], ["api_key_id"]]),
+      amount: change,
+      change,
+      balanceAfter: readNumber(entry, [["balanceAfter"], ["balance_after"], ["currentBalance"]], 0),
+      createdAt: readString(entry, [["createdAt"], ["created_at"], ["timestamp"]]),
+      eventType,
+      source,
+      sourceLabel: readString(entry, [["sourceLabel"], ["source_label"]], getCreditHistorySourceLabel(source)),
+    };
+  });
 
   const filters = {
+    direction: normalizeCreditsDirection(readString(filtersPayload, [["direction"]], fallback.filters.direction)),
     page: Math.max(1, readNumber(filtersPayload, [["page"]], fallback.filters.page)),
     pageSize: Math.max(1, readNumber(filtersPayload, [["pageSize"], ["limit"]], fallback.filters.pageSize)),
     range: normalizeCreditHistoryRange(readString(filtersPayload, [["range"]], fallback.filters.range)),
@@ -736,29 +856,83 @@ export const toCreditsHistoryResponse = (payload: unknown, request: GetCreditsHi
     totalPages: Math.max(0, readNumber(paginationPayload, [["totalPages"]], items.length ? 1 : 0)),
   };
 
+  const itemTopupCredits = sumCreditsHistoryBySource(items, "topup");
+  const itemSignupCredits = sumCreditsHistoryBySource(items, "signup");
+  const itemTelegramCredits = sumCreditsHistoryBySource(items, "telegram");
+  const itemReferralCredits = sumCreditsHistoryBySource(items, "referral");
+  const summaryTopupCredits = readNumber(summaryPayload, [["topupCredits"]], itemTopupCredits);
+  const summarySignupCredits = readNumber(summaryPayload, [["signupCredits"]], itemSignupCredits);
+  const summaryTelegramCredits = readNumber(summaryPayload, [["telegramCredits"], ["telegramBonusCredits"], ["telegramBindCredits"]], itemTelegramCredits);
+  const summaryReferralCredits = readNumber(summaryPayload, [["referralCredits"]], itemReferralCredits);
+  const shouldSplitSignupAndTelegramFromItems =
+    !hasPathValue(cardsPayload, ["signupBonus"]) &&
+    !hasPathValue(cardsPayload, ["telegramBonus"]) &&
+    !hasPathValue(summaryPayload, ["telegramCredits"]) &&
+    !hasPathValue(summaryPayload, ["telegramBonusCredits"]) &&
+    !hasPathValue(summaryPayload, ["telegramBindCredits"]) &&
+    itemSignupCredits > 0 &&
+    itemTelegramCredits > 0;
+
+  const topupCredits = readNumber(cardsPayload, [["topUpCredits"], ["topupCredits"]], summaryTopupCredits);
+  const telegramCredits = readNumber(
+    cardsPayload,
+    [["telegramBonus"], ["telegramCredits"], ["telegramBonusCredits"], ["telegramBindCredits"]],
+    shouldSplitSignupAndTelegramFromItems ? itemTelegramCredits : summaryTelegramCredits,
+  );
+  const signupCredits = readNumber(
+    cardsPayload,
+    [["signupBonus"], ["signupCredits"]],
+    shouldSplitSignupAndTelegramFromItems ? itemSignupCredits : summarySignupCredits,
+  );
+  const referralCredits = readNumber(cardsPayload, [["referralBonus"], ["referralCredits"]], summaryReferralCredits);
+  const currentBalance = readNumber(data, [["currentBalance"], ["balance"], ["credits", "remaining"]], 0);
+  const flowSummary = {
+    currentBalance: readNumber(flowSummaryPayload, [["currentBalance"]], currentBalance),
+    visibleCreditsAdded: readNumber(
+      flowSummaryPayload,
+      [["visibleCreditsAdded"]],
+      items.filter((item) => item.amount > 0).reduce((sum, item) => sum + item.amount, 0),
+    ),
+    visibleCreditsDeducted: readNumber(
+      flowSummaryPayload,
+      [["visibleCreditsDeducted"]],
+      items.filter((item) => item.amount < 0).reduce((sum, item) => sum + item.amount, 0),
+    ),
+    visibleEntries: Math.max(0, readNumber(flowSummaryPayload, [["visibleEntries"]], items.length)),
+  };
+  const chart = readArray(data, [["chart"]]).map((entry) => ({
+    date: readString(entry, [["date"], ["createdAt"], ["created_at"]]),
+    addedCredits: readNumber(entry, [["addedCredits"], ["positiveAmount"]], 0),
+    deductedCredits: readNumber(entry, [["deductedCredits"], ["negativeAmount"]], 0),
+    netCredits: readNumber(entry, [["netCredits"]], 0),
+    entryCount: Math.max(0, readNumber(entry, [["entryCount"], ["events"]], 0)),
+  }));
+  const summary = {
+    filteredCredits: flowSummary.visibleCreditsAdded + flowSummary.visibleCreditsDeducted,
+    totalAddedCredits: topupCredits + signupCredits + telegramCredits + referralCredits,
+    topupCredits,
+    signupCredits,
+    telegramCredits,
+    referralCredits,
+  };
+
   return {
     apiKeyType: readString(data, [["apiKeyType"], ["meta", "apiKeyType"]]),
     twitterId: readString(data, [["twitterId"], ["meta", "twitterId"]]),
     telegramId: readString(data, [["telegramId"], ["meta", "telegramId"]]),
     accountStatus: readString(data, [["accountStatus"], ["status"], ["meta", "accountStatus"]]),
-    currentBalance: readNumber(data, [["currentBalance"], ["balance"], ["credits", "remaining"]], 0),
+    currentBalance: flowSummary.currentBalance,
     filters,
-    summary: {
-      filteredCredits: readNumber(summaryPayload, [["filteredCredits"]], items.reduce((sum, item) => sum + item.amount, 0)),
-      totalAddedCredits: readNumber(
-        summaryPayload,
-        [["totalAddedCredits"]],
-        items.filter((item) => item.amount > 0).reduce((sum, item) => sum + item.amount, 0),
-      ),
-      topupCredits: readNumber(summaryPayload, [["topupCredits"]], sumCreditsHistoryBySource(items, "topup")),
-      signupCredits: readNumber(summaryPayload, [["signupCredits"]], sumCreditsHistoryBySource(items, "signup")),
-      telegramCredits: readNumber(
-        summaryPayload,
-        [["telegramCredits"], ["telegramBonusCredits"], ["telegramBindCredits"]],
-        sumCreditsHistoryBySource(items, "telegram"),
-      ),
-      referralCredits: readNumber(summaryPayload, [["referralCredits"]], sumCreditsHistoryBySource(items, "referral")),
+    cards: {
+      topUpCredits: topupCredits,
+      signupBonus: signupCredits,
+      telegramBonus: telegramCredits,
+      referralBonus: referralCredits,
     },
+    flowSummary,
+    chart,
+    summary,
+    events: items,
     history: items,
     items,
     pagination,
@@ -1261,18 +1435,20 @@ export const fetchApiUsage = async (range: UsageRange) => {
 
 export const fetchCreditsHistory = async (query: GetCreditsHistoryQuery = {}) => {
   const normalizedQuery = {
+    direction: normalizeCreditsDirection(query.direction),
     page: Math.max(1, query.page ?? 1),
     pageSize: Math.max(1, query.pageSize ?? 10),
     range: normalizeCreditHistoryRange(query.range),
     source: normalizeCreditHistorySource(query.source),
   };
   const searchParams = new URLSearchParams({
+    direction: normalizedQuery.direction,
     page: String(normalizedQuery.page),
     pageSize: String(normalizedQuery.pageSize),
     range: normalizedQuery.range,
     source: normalizedQuery.source,
   });
-  const payload = await apiRequest<unknown>(`/api/v1/twitterUsers/api-keys/credits-history?${searchParams.toString()}`, {
+  const payload = await apiRequest<unknown>(`/api/v1/twitterUsers/api-keys/credits-events?${searchParams.toString()}`, {
     method: "GET",
   });
 
