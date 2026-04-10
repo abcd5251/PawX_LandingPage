@@ -21,8 +21,10 @@ const Index = () => {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
+    const authStatus = params.get("auth");
     const shouldCheckSession =
       window.sessionStorage.getItem(AUTH_REDIRECT_STORAGE_KEY) === "1" ||
+      authStatus === "success" ||
       params.has("code") ||
       params.has("state") ||
       params.has("oauth_token") ||
