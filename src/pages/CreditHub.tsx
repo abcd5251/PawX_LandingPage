@@ -773,10 +773,14 @@ const CreditHub = () => {
             ? resolvedReferral.referralCode || storedReferralCode || undefined
             : undefined;
 
-        await bindTelegram({
+        const bindTelegramPayload = {
           telegramAuth: toTelegramAuthPayload(user),
           referralCode: validatedReferralCode,
-        });
+        };
+
+        console.log("[bind-telegram] request payload", bindTelegramPayload);
+
+        await bindTelegram(bindTelegramPayload);
 
         const nextProfile = await loadProfileForUser(activeSessionUser);
         if (isTelegramBoundProfile(nextProfile)) {
