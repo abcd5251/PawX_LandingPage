@@ -1563,7 +1563,7 @@ export const getReadableAuthError = (error: unknown) => {
     }
 
     if (error.status === 409) {
-      return "An active API key already exists. Use Rotate API Key if you need a new one.";
+      return "This Telegram account has already been registered.";
     }
 
     return error.message;
