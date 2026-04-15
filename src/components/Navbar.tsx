@@ -1,9 +1,12 @@
 import { Button } from "@/components/ui/button";
 import logo from "@/assets/logo.jpg";
 import { Sparkles } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
+import { buildPathWithReferralCode } from "@/lib/creditHubAuth";
 
 const Navbar = () => {
+  const location = useLocation();
+
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 px-6 py-4 flex justify-center backdrop-blur-sm">
       <div className="glass-card px-6 py-3 flex items-center gap-8 rounded-full">
@@ -38,7 +41,7 @@ const Navbar = () => {
 
         {/* 简洁按钮 */}
         <Button size="sm" className="rounded-full group" asChild>
-          <Link to="/credit-hub">
+          <Link to={buildPathWithReferralCode("/credit-hub", location.search)}>
             <Sparkles className="w-3.5 h-3.5 mr-1.5 group-hover:rotate-12 transition-transform" />
             Start
           </Link>

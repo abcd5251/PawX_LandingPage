@@ -9,7 +9,7 @@ import ApiSection from "@/components/ApiSection";
 import PartnersSection from "@/components/PartnersSection";
 import CtaSection from "@/components/CtaSection";
 import Footer from "@/components/Footer";
-import { AUTH_REDIRECT_STORAGE_KEY, fetchXSession, persistReferralCodeFromUrl } from "@/lib/creditHubAuth";
+import { AUTH_REDIRECT_STORAGE_KEY, buildPathWithReferralCode, fetchXSession, persistReferralCodeFromUrl } from "@/lib/creditHubAuth";
 
 const Index = () => {
   const location = useLocation();
@@ -38,7 +38,7 @@ const Index = () => {
       const sessionUser = await fetchXSession();
 
       if (sessionUser) {
-        navigate("/credit-hub", { replace: true });
+        navigate(buildPathWithReferralCode("/credit-hub", location.search), { replace: true });
         return;
       }
 

@@ -8,6 +8,7 @@ import {
   buildEmptyCreditsHistory,
   buildEmptyApiUsage,
   buildFallbackProfile,
+  buildPathWithReferralCode,
   clearStoredReferralCode,
   createApiKey,
   createPaymentSession,
@@ -310,7 +311,7 @@ const CreditHub = () => {
         }
 
         if (isAuthCallback) {
-          navigate("/credit-hub", { replace: true });
+          navigate(buildPathWithReferralCode("/credit-hub", location.search), { replace: true });
         }
         window.sessionStorage.removeItem(AUTH_REDIRECT_STORAGE_KEY);
       } catch (error) {
@@ -325,7 +326,7 @@ const CreditHub = () => {
     };
 
     void bootstrapSession();
-  }, [isAuthCallback, loadProfileForUser, navigate]);
+  }, [isAuthCallback, loadProfileForUser, location.search, navigate]);
 
   useEffect(() => {
     const referralCode = persistReferralCodeFromUrl(location.search) ?? getStoredReferralCode();

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bindTelegram,
+  buildPathWithReferralCode,
   buildEmptyCreditsHistory,
   clearStoredReferralCode,
   getAppBaseUrl,
@@ -430,6 +431,19 @@ describe("creditHubAuth", () => {
     clearStoredReferralCode();
 
     expect(getStoredReferralCode()).toBeNull();
+  });
+
+  it("appends the stored referral code when navigating to credit hub routes", () => {
+    persistReferralCodeFromUrl("?ref=ABC123");
+
+    expect(buildPathWithReferralCode("/credit-hub")).toBe("/credit-hub?ref=ABC123");
+    expect(buildPathWithReferralCode("/payment/result?sessionId=session-1")).toBe("/payment/result?sessionId=session-1&ref=ABC123");
+  });
+
+  it("prefers the current url referral code when building the next route", () => {
+    persistReferralCodeFromUrl("?ref=OLD123");
+
+    expect(buildPathWithReferralCode("/credit-hub", "?ref=NEW456")).toBe("/credit-hub?ref=NEW456");
   });
 
   it("maps dedicated referral profile payloads", () => {

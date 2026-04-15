@@ -554,6 +554,19 @@ export const persistReferralCodeFromUrl = (search?: string) => {
   return referralCode;
 };
 
+export const buildPathWithReferralCode = (path: string, search?: string) => {
+  const [pathname, rawQuery = ""] = path.split("?", 2);
+  const params = new URLSearchParams(rawQuery);
+  const referralCode = persistReferralCodeFromUrl(search) ?? getStoredReferralCode();
+
+  if (!referralCode || params.has("ref")) {
+    return rawQuery ? `${pathname}?${params.toString()}` : pathname;
+  }
+
+  params.set("ref", referralCode);
+  return `${pathname}?${params.toString()}`;
+};
+
 export const getStoredReferralCode = () => {
   if (typeof window === "undefined") {
     return null;
