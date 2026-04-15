@@ -92,6 +92,9 @@ const pickConcreteSessionUser = (...candidates: Array<XSessionUser | null | unde
   candidates.find((candidate): candidate is XSessionUser => Boolean(candidate)) ??
   null;
 
+const isSameReferralCode = (left?: string | null, right?: string | null) =>
+  (left || "").trim().toUpperCase() === (right || "").trim().toUpperCase();
+
 const getReadableUsageError = (error: unknown, range: UsageRange) => {
   if (error instanceof CreditHubApiError) {
     if (error.message.toLowerCase().includes("generate_series")) {
@@ -332,9 +335,27 @@ const CreditHub = () => {
       return;
     }
 
-    void loadResolvedReferral(referralCode).catch(() => {
-      void 0;
-    });
+    let cancelled = false;
+
+    void loadResolvedReferral(referralCode)
+      .then((resolved: ReferralCodeResolution) => {
+        if (cancelled) {
+          return;
+        }
+
+        if (!resolved.isValid) {
+          clearStoredReferralCode();
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setResolvedReferral(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [loadResolvedReferral, location.search]);
 
   useEffect(() => {
@@ -735,11 +756,25 @@ const CreditHub = () => {
       setIsBindingTelegram(true);
 
       try {
-        const storedReferralCode = getStoredReferralCode() || undefined;
+        const storedReferralCode = getStoredReferralCode();
+        const hasStoredReferralCode = Boolean(storedReferralCode);
+        const referralValidationFinished =
+          !hasStoredReferralCode || Boolean(resolvedReferral && isSameReferralCode(resolvedReferral.referralCode, storedReferralCode));
+
+        if (!referralValidationFinished) {
+          setStatusMessage("");
+          setAuthError("Referral code is still being verified. Please wait a moment and retry Telegram linking.");
+          return;
+        }
+
+        const validatedReferralCode =
+          resolvedReferral?.isValid && (resolvedReferral.referralCode || storedReferralCode)
+            ? resolvedReferral.referralCode || storedReferralCode || undefined
+            : undefined;
+
         await bindTelegram({
-          twitterId: activeSessionUser.twitterId,
           telegramAuth: toTelegramAuthPayload(user),
-          referralCode: storedReferralCode,
+          referralCode: validatedReferralCode,
         });
 
         const nextProfile = await loadProfileForUser(activeSessionUser);
@@ -789,7 +824,7 @@ const CreditHub = () => {
         setIsBindingTelegram(false);
       }
     },
-    [loadProfileForUser, profile, recoverTelegramBindAfterUnauthorized, resolveTelegramBindingContext, sessionUser, settleTelegramLinkedState],
+    [loadProfileForUser, profile, recoverTelegramBindAfterUnauthorized, resolveTelegramBindingContext, resolvedReferral, sessionUser, settleTelegramLinkedState],
   );
 
   useEffect(() => {

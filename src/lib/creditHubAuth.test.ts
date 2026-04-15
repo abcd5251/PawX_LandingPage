@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  bindTelegram,
   buildEmptyCreditsHistory,
   clearStoredReferralCode,
   getAppBaseUrl,
@@ -11,6 +12,7 @@ import {
   normalizeCreditHistorySource,
   normalizeUsageRange,
   persistReferralCodeFromUrl,
+  resolveReferralCode,
   toCreditsHistoryResponse,
   toPaymentSession,
   toPaymentSessionStatusResult,
@@ -493,6 +495,92 @@ describe("creditHubAuth", () => {
       inviterName: "Allen",
       inviterHandle: "@allen_test",
       message: "",
+    });
+  });
+
+  it("maps referral resolve payloads from referrerUsername responses", () => {
+    const resolved = toReferralCodeResolution(
+      {
+        valid: true,
+        referralCode: "ABC123",
+        referrerUsername: "alice",
+      },
+      "ABC123",
+    );
+
+    expect(resolved).toEqual({
+      referralCode: "ABC123",
+      isValid: true,
+      inviterName: "alice",
+      inviterHandle: "@alice",
+      message: "",
+    });
+  });
+
+  it("calls referral resolve with the documented endpoint and credentials", async () => {
+    vi.stubEnv("VITE_PAWX_API_BASE_URL", "https://api.example.com/");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ valid: true, referralCode: "ABC123", referrerUsername: "alice" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const resolved = await resolveReferralCode("ABC123");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.com/api/v1/twitterUsers/api-keys/referral/resolve?ref=ABC123",
+      expect.objectContaining({
+        method: "GET",
+        credentials: "include",
+      }),
+    );
+    expect(resolved.isValid).toBe(true);
+    expect(resolved.inviterHandle).toBe("@alice");
+  });
+
+  it("posts bind-telegram with credentials and only the validated referral payload", async () => {
+    vi.stubEnv("VITE_PAWX_API_BASE_URL", "https://api.example.com/");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await bindTelegram({
+      telegramAuth: {
+        id: "123456789",
+        first_name: "Allen",
+        username: "allenchu",
+        auth_date: "1712345678",
+        hash: "hash-value",
+      },
+      referralCode: "ABC123",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.com/api/v1/twitterUsers/api-keys/bind-telegram",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+      }),
+    );
+
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(requestInit.body))).toEqual({
+      telegramAuth: {
+        id: "123456789",
+        first_name: "Allen",
+        username: "allenchu",
+        auth_date: "1712345678",
+        hash: "hash-value",
+      },
+      referralCode: "ABC123",
     });
   });
 

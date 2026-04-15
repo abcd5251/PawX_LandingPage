@@ -53,7 +53,7 @@ export interface TelegramAuthPayload {
 }
 
 export interface BindTelegramRequest {
-  twitterId: string;
+  twitterId?: string;
   telegramAuth: TelegramAuthPayload;
   referralCode?: string;
 }
@@ -1207,12 +1207,32 @@ export const toReferralCodeResolution = (
   ),
   inviterName: readString(
     payload,
-    [["inviterName"], ["inviter", "name"], ["invitedBy", "name"], ["referralOwner", "name"], ["owner", "name"]],
+    [
+      ["inviterName"],
+      ["inviter", "name"],
+      ["invitedBy", "name"],
+      ["referralOwner", "name"],
+      ["owner", "name"],
+      ["referrerName"],
+      ["referrer", "name"],
+      ["referrerUsername"],
+      ["referrer", "username"],
+    ],
   ),
   inviterHandle: normalizeOptionalHandle(
     readString(
       payload,
-      [["inviterHandle"], ["inviter", "handle"], ["inviter", "username"], ["invitedBy", "handle"], ["invitedBy", "username"]],
+      [
+        ["inviterHandle"],
+        ["inviter", "handle"],
+        ["inviter", "username"],
+        ["invitedBy", "handle"],
+        ["invitedBy", "username"],
+        ["referrerHandle"],
+        ["referrer", "handle"],
+        ["referrerUsername"],
+        ["referrer", "username"],
+      ],
     ),
   ),
   message: readString(payload, [["message"], ["detail"], ["error"], ["data", "message"]]),
