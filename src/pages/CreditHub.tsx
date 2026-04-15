@@ -778,8 +778,6 @@ const CreditHub = () => {
           referralCode: validatedReferralCode,
         };
 
-        console.log("[bind-telegram] request payload", bindTelegramPayload);
-
         await bindTelegram(bindTelegramPayload);
 
         const nextProfile = await loadProfileForUser(activeSessionUser);
