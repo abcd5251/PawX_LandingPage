@@ -332,9 +332,18 @@ const CreditHub = () => {
     const referralCode = persistReferralCodeFromUrl(location.search) ?? getStoredReferralCode();
 
     if (!referralCode) {
+      console.log("[referral-resolve] skipped", {
+        search: location.search,
+        storedReferralCode: getStoredReferralCode(),
+      });
       setResolvedReferral(null);
       return;
     }
+
+    console.log("[referral-resolve] start", {
+      search: location.search,
+      referralCode,
+    });
 
     let cancelled = false;
 
@@ -344,11 +353,21 @@ const CreditHub = () => {
           return;
         }
 
+        console.log("[referral-resolve] success", {
+          referralCode,
+          resolved,
+        });
+
         if (!resolved.isValid) {
           clearStoredReferralCode();
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        console.error("[referral-resolve] failed", {
+          referralCode,
+          search: location.search,
+          error,
+        });
         if (!cancelled) {
           setResolvedReferral(null);
         }

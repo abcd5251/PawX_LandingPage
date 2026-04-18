@@ -1,10 +1,11 @@
 import { motion } from "framer-motion";
 import { ArrowDownRight, ArrowUpRight, BarChart3, Check, Copy, ExternalLink, Filter, KeyRound, Link2, LogOut, MessageCircleMore, RefreshCw, Send, ShieldCheck, Users, Wallet } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import PawIcon from "@/components/PawIcon";
 import { Button } from "@/components/ui/button";
 import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -322,6 +323,7 @@ const Dashboard = ({
   const referralItems = referralProfile?.referrals ?? [];
   const inviterDisplay = resolvedReferral?.inviterHandle || resolvedReferral?.inviterName;
   const referralCodeValue = referralProfile?.referralCode || activeProfile.referralCode;
+  const shouldShowReferralInviteBanner = Boolean(resolvedReferral?.isValid && !activeProfile.telegramConnected);
   const apiKeyStatusText = activeProfile.hasActiveApiKey
     ? `Active key available${activeProfile.apiKeyLast4 ? ` · ${activeProfile.apiKeyLast4}` : activeProfile.apiKeyPreview ? ` · ${activeProfile.apiKeyPreview}` : ""}`
     : "No API key created";
@@ -337,6 +339,29 @@ const Dashboard = ({
 
     return usage.totalCreditsUsed / usage.days.length;
   }, [usage.days.length, usage.totalCreditsUsed]);
+
+  useEffect(() => {
+    console.log("[referral-ui] state", {
+      search: typeof window === "undefined" ? "" : window.location.search,
+      shouldShowReferralInviteBanner,
+      resolvedReferral,
+      inviterDisplay: inviterDisplay || null,
+      telegramConnected: activeProfile.telegramConnected,
+      referralCodeValue: referralCodeValue || null,
+      referralLink: referralLink || null,
+      peopleReferred,
+      referralItemsCount: referralItems.length,
+    });
+  }, [
+    activeProfile.telegramConnected,
+    inviterDisplay,
+    peopleReferred,
+    referralCodeValue,
+    referralItems.length,
+    referralLink,
+    resolvedReferral,
+    shouldShowReferralInviteBanner,
+  ]);
 
   const balanceOverview = useMemo(() => {
     const allocatedBaseCredits = Math.max(
@@ -613,9 +638,11 @@ const Dashboard = ({
                       <p className="text-sm font-semibold">Referral Access</p>
                     </div>
 
-                    {resolvedReferral?.isValid && inviterDisplay && !activeProfile.telegramConnected ? (
+                    {shouldShowReferralInviteBanner ? (
                       <p className="mt-4 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-foreground">
-                        Invited by {inviterDisplay}. Link Telegram to apply this referral.
+                        {inviterDisplay
+                          ? `Invited by ${inviterDisplay}. Link Telegram to apply this referral.`
+                          : "Referral link detected. Link Telegram to apply this referral."}
                       </p>
                     ) : null}
 
@@ -897,73 +924,82 @@ const Dashboard = ({
                   <p className="text-sm font-semibold">Referral Details</p>
                   <p className="text-xs text-muted-foreground">Each referred account now includes payment activity and claimable payout data.</p>
                 </div>
-                <span className="text-xs text-muted-foreground">{referralItems.length.toLocaleString()} users</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground">{referralItems.length.toLocaleString()} users</span>
+                  {referralItems.length > 3 ? (
+                    <span className="rounded-full border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground">
+                      Showing all referrals
+                    </span>
+                  ) : null}
+                </div>
               </div>
 
               {referralItems.length ? (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>User</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead className="text-right">Claimable</TableHead>
-                        <TableHead>Latest Paid</TableHead>
-                        <TableHead>Joined</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {referralItems.map((item, index) => {
-                        const displayName = formatTelegramUsername(item.telegramUsername) || item.telegramId || `Referral ${index + 1}`;
+                <ScrollArea className={referralItems.length > 3 ? "max-h-[420px]" : undefined}>
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>User</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Claimable</TableHead>
+                          <TableHead>Latest Paid</TableHead>
+                          <TableHead>Joined</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {referralItems.map((item, index) => {
+                          const displayName = formatTelegramUsername(item.telegramUsername) || item.telegramId || `Referral ${index + 1}`;
 
-                        return (
-                          <TableRow key={`${item.telegramId || displayName}-${item.createdAt || index}`}>
-                            <TableCell>
-                              <div className="flex items-center gap-3">
-                                {item.telegramPhotoUrl ? (
-                                  <img
-                                    src={item.telegramPhotoUrl}
-                                    alt={displayName}
-                                    className="h-10 w-10 rounded-full border object-cover"
-                                  />
-                                ) : (
-                                  <div className="flex h-10 w-10 items-center justify-center rounded-full border bg-muted/60">
-                                    <Users className="h-4 w-4 text-muted-foreground" />
+                          return (
+                            <TableRow key={`${item.telegramId || displayName}-${item.createdAt || index}`}>
+                              <TableCell>
+                                <div className="flex items-center gap-3">
+                                  {item.telegramPhotoUrl ? (
+                                    <img
+                                      src={item.telegramPhotoUrl}
+                                      alt={displayName}
+                                      className="h-10 w-10 rounded-full border object-cover"
+                                    />
+                                  ) : (
+                                    <div className="flex h-10 w-10 items-center justify-center rounded-full border bg-muted/60">
+                                      <Users className="h-4 w-4 text-muted-foreground" />
+                                    </div>
+                                  )}
+                                  <div>
+                                    <p className="font-medium">{displayName}</p>
+                                    <p className="text-xs text-muted-foreground">{item.telegramId ? `Telegram ID ${item.telegramId}` : "Telegram user"}</p>
                                   </div>
-                                )}
-                                <div>
-                                  <p className="font-medium">{displayName}</p>
-                                  <p className="text-xs text-muted-foreground">{item.telegramId ? `Telegram ID ${item.telegramId}` : "Telegram user"}</p>
                                 </div>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span
-                                  className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${
-                                    item.hasPaid
-                                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                      : "border-slate-200 bg-slate-50 text-slate-700"
-                                  }`}
-                                >
-                                  {item.hasPaid ? "Paid" : "No payment"}
-                                </span>
-                                <span className="inline-flex rounded-full border px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                                  {item.paymentCount.toLocaleString()} payments
-                                </span>
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-right font-medium">{formatUsdAmount(item.claimableAmountUsd)}</TableCell>
-                            <TableCell className="text-sm text-muted-foreground">
-                              {item.latestPaidAt ? formatHistoryTimestamp(item.latestPaidAt) : "—"}
-                            </TableCell>
-                            <TableCell className="text-sm text-muted-foreground">{item.createdAt ? formatHistoryTimestamp(item.createdAt) : "—"}</TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span
+                                    className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${
+                                      item.hasPaid
+                                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                        : "border-slate-200 bg-slate-50 text-slate-700"
+                                    }`}
+                                  >
+                                    {item.hasPaid ? "Paid" : "No payment"}
+                                  </span>
+                                  <span className="inline-flex rounded-full border px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                                    {item.paymentCount.toLocaleString()} payments
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right font-medium">{formatUsdAmount(item.claimableAmountUsd)}</TableCell>
+                              <TableCell className="text-sm text-muted-foreground">
+                                {item.latestPaidAt ? formatHistoryTimestamp(item.latestPaidAt) : "—"}
+                              </TableCell>
+                              <TableCell className="text-sm text-muted-foreground">{item.createdAt ? formatHistoryTimestamp(item.createdAt) : "—"}</TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </ScrollArea>
               ) : (
                 <div className="px-5 py-10 text-center text-sm text-muted-foreground">
                   No referrals yet. Once users join from your link, payment status and claimable amounts will appear here.
