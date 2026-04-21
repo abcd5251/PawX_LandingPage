@@ -35,7 +35,8 @@ const Index = () => {
     }
 
     const redirectSignedInUser = async () => {
-      const sessionUser = await fetchXSession();
+      const ott = params.get("ott");
+      const sessionUser = await fetchXSession(ott);
 
       if (sessionUser) {
         navigate(buildPathWithReferralCode("/credit-hub", location.search), { replace: true });

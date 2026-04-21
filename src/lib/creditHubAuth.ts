@@ -1400,9 +1400,10 @@ export const toApiKeyProfile = (sessionUser: XSessionUser, payload: unknown): Ap
   };
 };
 
-export const fetchXSession = async () => {
+export const fetchXSession = async (ott?: string | null) => {
   try {
-    const payload = await apiRequest<unknown>("/api/v1/auth/x/session", { method: "GET" });
+    const path = ott ? `/api/v1/auth/x/session?ott=${encodeURIComponent(ott)}` : "/api/v1/auth/x/session";
+    const payload = await apiRequest<unknown>(path, { method: "GET" });
     return toXSessionUser(payload);
   } catch (error) {
     if (error instanceof CreditHubApiError && error.status === 401) {
