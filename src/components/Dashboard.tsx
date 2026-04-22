@@ -883,11 +883,11 @@ const Dashboard = ({
 
             <div className="rounded-2xl border border-violet-200/80 bg-violet-50/80 p-4">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-semibold text-violet-900">Claimable Amount</p>
+                <p className="text-sm font-semibold text-violet-900">Referral Reward</p>
                 <Wallet className="h-4 w-4 text-violet-700" />
               </div>
               <p className="mt-4 text-3xl font-extrabold text-violet-700">{formatUsdAmount(claimableAmountUsd)}</p>
-              <p className="mt-1 text-xs text-violet-700/80">Current claimable USD accumulated from referral payments.</p>
+              <p className="mt-1 text-xs text-violet-700/80">Total claimable referral rewards.</p>
             </div>
           </div>
 
@@ -1020,7 +1020,6 @@ const Dashboard = ({
               <Wallet className="h-5 w-5 text-primary" />
               <div>
                 <h2 className="text-lg font-bold">Top Up API Credits</h2>
-                <p className="text-sm text-muted-foreground">Professional top-up cards inspired by modern API billing dashboards.</p>
               </div>
             </div>
             <Button variant="outline" asChild>
@@ -1034,46 +1033,16 @@ const Dashboard = ({
           <div className="mb-5 rounded-3xl border bg-muted/30 p-5 md:p-6">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div className="max-w-2xl">
-                <p className="text-sm font-semibold">Settlement Token</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Select which USDC network the KiraPay checkout should use. The frontend sends only planId, tokenOut, and redirectUrl, and the backend validates the final payload before creating the payment session.
-                </p>
+                <p className="text-sm font-semibold">Payment</p>
+                <p className="mt-1 text-sm text-muted-foreground">Currently support USDC on every EVM chains</p>
               </div>
               {!activeProfile.telegramConnected ? (
                 <div className="rounded-2xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                  Link Telegram first. The payment API blocks accounts that have not finished Telegram binding.
+                  Link Telegram first.
                 </div>
               ) : null}
             </div>
 
-            <div className="mt-4 grid gap-3 lg:grid-cols-2">
-              {PAYMENT_TOKEN_OPTIONS.map((option) => {
-                const isSelected = option.id === selectedPaymentToken.id;
-
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => setSelectedPaymentTokenId(option.id)}
-                    className={`rounded-2xl border p-4 text-left transition-all ${
-                      isSelected
-                        ? "border-primary/40 bg-primary/10 shadow-[0_14px_30px_rgba(251,146,60,0.12)]"
-                        : "border-border bg-background hover:border-primary/20"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold">{option.label}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">{option.chainLabel}</p>
-                      </div>
-                      <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">{option.symbol}</span>
-                    </div>
-                    <p className="mt-3 text-sm text-muted-foreground">{option.description}</p>
-                    <p className="mt-3 break-all text-xs text-muted-foreground">{option.address}</p>
-                  </button>
-                );
-              })}
-            </div>
           </div>
 
           {activePaymentSessionId ? (
@@ -1164,7 +1133,7 @@ const Dashboard = ({
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold">{plan.name}</p>
+                    <p className="text-lg font-semibold">{plan.name}</p>
                     <p className="mt-1 text-sm text-muted-foreground">{plan.description}</p>
                   </div>
                   {plan.highlighted ? (

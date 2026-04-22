@@ -14,8 +14,6 @@ import {
   buildPathWithReferralCode,
   fetchXSession,
   persistReferralCodeFromUrl,
-  readFrontendXSessionFromHash,
-  storeFrontendXSession,
 } from "@/lib/creditHubAuth";
 
 const Index = () => {
@@ -25,57 +23,6 @@ const Index = () => {
   useEffect(() => {
     persistReferralCodeFromUrl(location.search);
   }, [location.search]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    let cancelled = false;
-
-    const captureInboundSession = async () => {
-      const fragmentSession = readFrontendXSessionFromHash(location.hash);
-
-      if (fragmentSession) {
-        console.log("[x-session-landing] fragment detected", fragmentSession);
-        storeFrontendXSession(fragmentSession.sessionUser);
-
-        if (!cancelled) {
-          navigate(buildPathWithReferralCode("/credit-hub", location.search), { replace: true });
-        }
-        return;
-      }
-
-      const ott = params.get("ott");
-
-      if (!ott) {
-        return;
-      }
-
-      console.log("[x-session-landing] ott detected", {
-        redirectOrigin: fragmentSession?.redirectOrigin || "",
-        sessionPayloadLength: 0,
-        search: location.search,
-      });
-
-      const sessionUser = await fetchXSession(ott);
-
-      if (!sessionUser || cancelled) {
-        return;
-      }
-
-      const cleanParams = new URLSearchParams(location.search);
-      cleanParams.delete("ott");
-      cleanParams.delete("auth");
-      const cleanSearch = cleanParams.toString();
-      const nextPath = cleanSearch ? `/credit-hub?${cleanSearch}` : "/credit-hub";
-
-      navigate(buildPathWithReferralCode(nextPath, cleanSearch ? `?${cleanSearch}` : ""), { replace: true });
-    };
-
-    void captureInboundSession();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [location.hash, location.search, navigate]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -92,21 +39,7 @@ const Index = () => {
       return;
     }
 
-    if (location.hash.includes("pawx_x_session") || params.has("ott")) {
-      return;
-    }
-
     const redirectSignedInUser = async () => {
-      const ott = params.get("ott");
-
-      // If we have an OTT, navigate to CreditHub and let it consume the OTT.
-      // This avoids consuming the OTT here and then failing the cookie-based
-      // session check in CreditHub (which Safari ITP blocks for cross-origin cookies).
-      if (ott && authStatus === "success") {
-        navigate(buildPathWithReferralCode("/credit-hub", location.search), { replace: true });
-        return;
-      }
-
       const sessionUser = await fetchXSession();
 
       if (sessionUser) {
@@ -118,7 +51,7 @@ const Index = () => {
     };
 
     void redirectSignedInUser();
-  }, [location.hash, location.search, navigate]);
+  }, [location.search, navigate]);
 
   return (
     <div className="min-h-screen bg-background">
