@@ -76,31 +76,31 @@ const TOP_UP_PLANS = [
   {
     id: "Starter",
     name: "Starter Pack",
-    price: "2 USDC",
-    credits: "1,000 Credits",
-    description: "Entry top-up mapped to the backend Starter payment plan.",
-    features: ["Base USDC checkout", "Webhook adds 1,000 credits", "Good for light API usage"],
-    actionLabel: "Top Up 2 USDC",
+    price: "10 USDC",
+    credits: "10,000 Credits",
+    description: "Starter top-up for getting started quickly.",
+    features: ["USDC checkout", "Adds 10,000 credits", "Good for light API usage"],
+    actionLabel: "Top Up 10 USDC",
     highlighted: false,
   },
   {
     id: "Standard",
     name: "Standard Pack",
-    price: "4 USDC",
-    credits: "3,000 Credits",
-    description: "Recommended top-up mapped to the backend Standard payment plan.",
-    features: ["Base USDC checkout", "Webhook adds 3,000 credits", "Best fit for recurring usage"],
-    actionLabel: "Top Up 4 USDC",
+    price: "20 USDC",
+    credits: "25,000 Credits",
+    description: "Balanced top-up for regular usage.",
+    features: ["USDC checkout", "Adds 25,000 credits", "Best fit for recurring usage"],
+    actionLabel: "Top Up 20 USDC",
     highlighted: true,
   },
   {
     id: "Advanced",
     name: "Advanced Pack",
-    price: "6 USDC",
-    credits: "5,000 Credits",
-    description: "Highest quick top-up mapped to the backend Advanced payment plan.",
-    features: ["Base USDC checkout", "Webhook adds 5,000 credits", "Suitable for heavier workloads"],
-    actionLabel: "Top Up 6 USDC",
+    price: "40 USDC",
+    credits: "60,000 Credits",
+    description: "Larger top-up for heavier workloads.",
+    features: ["USDC checkout", "Adds 60,000 credits", "Built for higher-volume usage"],
+    actionLabel: "Top Up 40 USDC",
     highlighted: false,
   },
 ] as const satisfies ReadonlyArray<{
@@ -267,7 +267,6 @@ const Dashboard = ({
   onLogout,
 }: DashboardProps) => {
   const [copiedValue, setCopiedValue] = useState<"" | "key" | "handle" | "twitterId" | "referralCode" | "referralLink">("");
-  const [selectedPaymentTokenId, setSelectedPaymentTokenId] = useState<(typeof PAYMENT_TOKEN_OPTIONS)[number]["id"]>(PAYMENT_TOKEN_OPTIONS[0].id);
   const [insightsTab, setInsightsTab] = useState<InsightsTab>("usage");
 
   const activeProfile = profile ?? {
@@ -432,10 +431,7 @@ const Dashboard = ({
   const filteredHistoryAddedAmount = creditsHistory.flowSummary.visibleCreditsAdded;
   const filteredHistoryDeductedAmount = Math.abs(creditsHistory.flowSummary.visibleCreditsDeducted);
 
-  const selectedPaymentToken = useMemo(
-    () => PAYMENT_TOKEN_OPTIONS.find((option) => option.id === selectedPaymentTokenId) ?? PAYMENT_TOKEN_OPTIONS[0],
-    [selectedPaymentTokenId],
-  );
+  const selectedPaymentToken = PAYMENT_TOKEN_OPTIONS[0];
   const activePaymentSessionId = paymentStatus?.sessionId || paymentStatus?.id || paymentSession?.id || "";
   const activePaymentState = paymentStatus?.status || paymentSession?.status || null;
   const activePaymentCheckoutUrl = paymentSession?.checkoutUrl || "";

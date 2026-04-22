@@ -91,6 +91,7 @@ const LoginScreen = ({ onLogin, isLoading = false, errorMessage, loadingLabel = 
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.3, duration: 0.4 }}
+          className="flex flex-col items-center"
         >
           <Button
             size="lg"
@@ -103,12 +104,12 @@ const LoginScreen = ({ onLogin, isLoading = false, errorMessage, loadingLabel = 
             </span>
             {isLoading ? loadingLabel : "Sign in with X"}
           </Button>
+          <p className="mt-7 text-center text-base font-medium text-muted-foreground/90">
+            For the best sign-in experience, please use Chrome.
+          </p>
         </motion.div>
 
         <div className="space-y-2 text-center">
-          <p className="text-muted-foreground text-xs">
-            Connect your X account to get started with 2,500 free credits
-          </p>
           {errorMessage ? <p className="text-sm font-medium text-destructive max-w-md">{errorMessage}</p> : null}
         </div>
       </motion.div>
