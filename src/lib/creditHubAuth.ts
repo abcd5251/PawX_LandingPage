@@ -272,6 +272,7 @@ export interface ApiUsageSeries {
 
 export const AUTH_REDIRECT_STORAGE_KEY = "pawx-credit-hub-auth-redirect";
 export const REFERRAL_CODE_STORAGE_KEY = "pawx_referral_code";
+export const FRONTEND_X_SESSION_STORAGE_KEY = "pawx_x_session";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -417,6 +418,12 @@ const normalizeOptionalHandle = (value: string) => {
   return value.startsWith("@") ? value : `@${value}`;
 };
 
+const decodeBase64Url = (value: string) => {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const paddingLength = (4 - (normalized.length % 4)) % 4;
+  return atob(`${normalized}${"=".repeat(paddingLength)}`);
+};
+
 const buildProfileUrl = (handle: string, twitterId: string, profileUrl?: string) => {
   if (profileUrl) {
     return profileUrl;
@@ -538,6 +545,18 @@ export const getTelegramBotUsername = () => trimEnvValue(import.meta.env.VITE_TE
 
 export const getXAuthorizationUrl = () => `${getApiBaseUrl()}/api/v1/auth/x/start`;
 
+export const getRedirectOrigin = () => {
+  if (typeof document === "undefined" || !document.referrer) {
+    return "";
+  }
+
+  try {
+    return new URL(document.referrer).origin;
+  } catch {
+    return document.referrer;
+  }
+};
+
 export const persistReferralCodeFromUrl = (search?: string) => {
   if (typeof window === "undefined") {
     return null;
@@ -581,6 +600,70 @@ export const clearStoredReferralCode = () => {
   }
 
   window.localStorage.removeItem(REFERRAL_CODE_STORAGE_KEY);
+};
+
+export const storeFrontendXSession = (sessionUser: XSessionUser) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(FRONTEND_X_SESSION_STORAGE_KEY, JSON.stringify(sessionUser));
+};
+
+export const getStoredFrontendXSession = () => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const rawValue = window.localStorage.getItem(FRONTEND_X_SESSION_STORAGE_KEY);
+
+  if (!rawValue) {
+    return null;
+  }
+
+  try {
+    return toXSessionUser(JSON.parse(rawValue));
+  } catch {
+    return null;
+  }
+};
+
+export const clearStoredFrontendXSession = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.removeItem(FRONTEND_X_SESSION_STORAGE_KEY);
+};
+
+export const readFrontendXSessionFromHash = (hash?: string) => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const normalizedHash = (hash ?? window.location.hash).startsWith("#")
+    ? (hash ?? window.location.hash).slice(1)
+    : (hash ?? window.location.hash);
+  const params = new URLSearchParams(normalizedHash);
+  const sessionB64 = params.get("pawx_x_session");
+
+  if (!sessionB64) {
+    return null;
+  }
+
+  const sessionJson = decodeBase64Url(sessionB64);
+  const payload = JSON.parse(sessionJson) as unknown;
+  const sessionUser = toXSessionUser(payload);
+
+  if (!sessionUser) {
+    return null;
+  }
+
+  return {
+    sessionUser,
+    sessionPayloadLength: sessionJson.length,
+    redirectOrigin: getRedirectOrigin(),
+  };
 };
 
 export const normalizeUsageRange = (value?: string): UsageRange => {
@@ -1404,7 +1487,13 @@ export const fetchXSession = async (ott?: string | null) => {
   try {
     const path = ott ? `/api/v1/auth/x/session?ott=${encodeURIComponent(ott)}` : "/api/v1/auth/x/session";
     const payload = await apiRequest<unknown>(path, { method: "GET" });
-    return toXSessionUser(payload);
+    const sessionUser = toXSessionUser(payload);
+
+    if (sessionUser) {
+      storeFrontendXSession(sessionUser);
+    }
+
+    return sessionUser;
   } catch (error) {
     if (error instanceof CreditHubApiError && error.status === 401) {
       return null;
@@ -1416,6 +1505,7 @@ export const fetchXSession = async (ott?: string | null) => {
 
 export const logoutXSession = async () => {
   await apiRequest("/api/v1/auth/x/logout", { method: "POST" });
+  clearStoredFrontendXSession();
 };
 
 export const fetchApiKeyProfile = async (sessionUser: XSessionUser) => {

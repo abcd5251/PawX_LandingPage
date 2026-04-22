@@ -13,6 +13,7 @@ import {
   createApiKey,
   createPaymentSession,
   CreditHubApiError,
+  clearStoredFrontendXSession,
   fetchCreditsHistory,
   fetchApiKeyProfile,
   fetchPaymentSession,
@@ -20,10 +21,12 @@ import {
   fetchReferralProfile,
   fetchApiUsage,
   fetchXSession,
+  getStoredFrontendXSession,
   getStoredReferralCode,
   getTelegramBotUsername,
   getReadableAuthError,
   getXAuthorizationUrl,
+  readFrontendXSessionFromHash,
   logoutXSession,
   normalizeCreditsDirection,
   normalizeCreditHistoryRange,
@@ -273,22 +276,50 @@ const CreditHub = () => {
     const bootstrapSession = async () => {
       setIsLoading(true);
       setAuthError("");
+      let fallbackSessionUser = getStoredFrontendXSession();
 
-      if (isAuthCallback) {
+      // Extract OTT from URL — passed here when Index.tsx forwards the post-OAuth redirect.
+      // Consuming it here (instead of Index.tsx) means the cookie is set in a page-level fetch
+      // rather than a bounce redirect, which Safari ITP allows.
+      const urlParams = new URLSearchParams(location.search);
+      const ott = urlParams.get("ott") ?? undefined;
+      const hasOtt = Boolean(ott);
+      const fragmentSession = readFrontendXSessionFromHash(location.hash);
+
+      if (fragmentSession) {
+        console.log("[x-session-credit-hub] fragment detected", fragmentSession);
+        fallbackSessionUser = fragmentSession.sessionUser;
+
+        if (location.hash) {
+          navigate(buildPathWithReferralCode("/credit-hub", location.search), { replace: true });
+        }
+      }
+
+      if (hasOtt || isAuthCallback) {
         setStatusMessage("Finishing X sign-in and loading your session and API key status...");
-      } else {
-        setStatusMessage("");
       }
 
       try {
-        const authenticatedUser = await fetchXSession();
+        const authenticatedUser = (await fetchXSession(ott)) ?? fallbackSessionUser;
         setSessionUser(authenticatedUser);
+
+        // Clean OTT and auth params from the URL after exchange
+        if (hasOtt) {
+          const cleanParams = new URLSearchParams(location.search);
+          cleanParams.delete("ott");
+          cleanParams.delete("auth");
+          const cleanSearch = cleanParams.toString();
+          navigate(
+            cleanSearch ? `/credit-hub?${cleanSearch}` : "/credit-hub",
+            { replace: true }
+          );
+        }
 
         if (!authenticatedUser) {
           setProfile(null);
           window.sessionStorage.removeItem(AUTH_REDIRECT_STORAGE_KEY);
-          if (isAuthCallback) {
-            setAuthError("X sign-in finished, but no valid session was found. Please verify that the backend callback successfully set the httpOnly cookie.");
+          if (hasOtt || isAuthCallback) {
+            setAuthError("X sign-in finished, but no valid session was found. Please try signing in again.");
           }
           return;
         }
@@ -315,8 +346,17 @@ const CreditHub = () => {
         }
         window.sessionStorage.removeItem(AUTH_REDIRECT_STORAGE_KEY);
       } catch (error) {
+        if (fallbackSessionUser && error instanceof CreditHubApiError && error.status === 401) {
+          setSessionUser(fallbackSessionUser);
+          setProfile(buildFallbackProfile(fallbackSessionUser));
+          setStatusMessage("Using the frontend session fallback. Protected account data may appear after the backend session cookie is restored.");
+          setAuthError("");
+          return;
+        }
+
         setSessionUser(null);
         setProfile(null);
+        clearStoredFrontendXSession();
         setAuthError(getReadableAuthError(error));
         window.sessionStorage.removeItem(AUTH_REDIRECT_STORAGE_KEY);
       } finally {
@@ -326,7 +366,8 @@ const CreditHub = () => {
     };
 
     void bootstrapSession();
-  }, [isAuthCallback, loadProfileForUser, location.search, navigate]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthCallback, loadProfileForUser, navigate]);
 
   useEffect(() => {
     const referralCode = persistReferralCodeFromUrl(location.search) ?? getStoredReferralCode();

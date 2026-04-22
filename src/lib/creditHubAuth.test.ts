@@ -3,9 +3,11 @@ import {
   bindTelegram,
   buildPathWithReferralCode,
   buildEmptyCreditsHistory,
+  clearStoredFrontendXSession,
   clearStoredReferralCode,
   getAppBaseUrl,
   getStoredReferralCode,
+  getStoredFrontendXSession,
   getApiBaseUrl,
   getPaymentReturnUrl,
   getXAuthorizationUrl,
@@ -13,7 +15,9 @@ import {
   normalizeCreditHistorySource,
   normalizeUsageRange,
   persistReferralCodeFromUrl,
+  readFrontendXSessionFromHash,
   resolveReferralCode,
+  storeFrontendXSession,
   toCreditsHistoryResponse,
   toPaymentSession,
   toPaymentSessionStatusResult,
@@ -147,6 +151,31 @@ describe("creditHubAuth", () => {
       handle: "@x-session",
       avatar: "https://api.dicebear.com/7.x/thumbs/svg?seed=x-session",
       profileUrl: "https://x.com/x-session",
+    });
+  });
+
+  it("stores and reads the frontend x session from localStorage", () => {
+    storeFrontendXSession(sessionUser);
+
+    expect(getStoredFrontendXSession()).toEqual(sessionUser);
+
+    clearStoredFrontendXSession();
+
+    expect(getStoredFrontendXSession()).toBeNull();
+  });
+
+  it("reads the frontend x session from the hash fragment payload", () => {
+    const payload = btoa(JSON.stringify({ authenticated: true, session: sessionUser }))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/g, "");
+
+    const result = readFrontendXSessionFromHash(`#pawx_x_session=${payload}`);
+
+    expect(result).toEqual({
+      sessionUser,
+      sessionPayloadLength: JSON.stringify({ authenticated: true, session: sessionUser }).length,
+      redirectOrigin: "",
     });
   });
 
