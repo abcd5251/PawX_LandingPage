@@ -6,6 +6,7 @@ import FeaturesSection from "@/components/FeaturesSection";
 import AlertBotSection from "@/components/AlertBotSection";
 import WebSocketSection from "@/components/WebSocketSection";
 import ApiSection from "@/components/ApiSection";
+import PricingSection from "@/components/PricingSection";
 import PartnersSection from "@/components/PartnersSection";
 import CtaSection from "@/components/CtaSection";
 import Footer from "@/components/Footer";
@@ -61,6 +62,7 @@ const Index = () => {
       <WebSocketSection />
       <AlertBotSection />
       <FeaturesSection />
+      <PricingSection />
       <PartnersSection />
       <CtaSection />
       <Footer />

@@ -34,6 +34,9 @@ const Navbar = () => {
           <a href="#features" className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground rounded-lg hover:bg-primary/5 transition-all">
             Social
           </a>
+          <a href="#pricing" className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground rounded-lg hover:bg-primary/5 transition-all">
+            Pricing
+          </a>
           <a href="#partners" className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground rounded-lg hover:bg-primary/5 transition-all">
             Partners
           </a>

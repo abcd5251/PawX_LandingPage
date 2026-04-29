@@ -1,55 +1,74 @@
-import { Check } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { TrendingDown, Layers, Wrench, Star } from "lucide-react";
 
-const plans = [
+type Plan = {
+  name: string;
+  price: string;
+  priceNote?: string;
+  model: string;
+  rate: string;
+  notes: string;
+  dotColor: string;
+  isPawX?: boolean;
+};
+
+const plans: Plan[] = [
   {
-    name: "Starter",
-    price: "$99",
-    period: "/month",
-    description: "Perfect for small projects",
-    features: [
-      "Real-time tweet stream",
-      "1,000 API calls/day",
-      "Basic KOL dataset",
-      "Email support",
-    ],
-    highlighted: false,
+    name: "PawX",
+    price: "$0.001",
+    priceNote: "$1.00 per account",
+    model: "Credit-based",
+    rate: "1000 req/sec",
+    notes: "Posts, replies, retweets, deleted tweets, reference tweets",
+    dotColor: "bg-gradient-orange",
+    isPawX: true,
   },
   {
-    name: "Pro",
-    price: "$299",
-    period: "/month",
-    description: "For growing Web3 teams",
-    features: [
-      "Everything in Starter",
-      "Unlimited API calls",
-      "Full KOL dataset (10K+)",
-      "WebSocket access",
-      "Priority support",
-      "Custom webhooks",
-    ],
-    highlighted: true,
+    name: "TwitterAPI.io",
+    price: "$0.15",
+    model: "Pay-as-you-go",
+    rate: "1000 req/sec",
+    notes: "Minimum charge per API call",
+    dotColor: "bg-yellow-500",
   },
   {
-    name: "Enterprise",
-    price: "Custom",
-    period: "",
-    description: "For large-scale operations",
-    features: [
-      "Everything in Pro",
-      "Dedicated infrastructure",
-      "Custom integrations",
-      "SLA guarantee",
-      "24/7 support",
-      "On-boarding assistance",
-    ],
-    highlighted: false,
+    name: "Apify (Tweet Scraper V2)",
+    price: "$0.40",
+    model: "Pay-as-you-go",
+    rate: "100 req/sec",
+    notes: "Max 50 tweets per request",
+    dotColor: "bg-orange-500",
+  },
+  {
+    name: "X Official API v2",
+    price: "$5.00",
+    model: "Credit-based",
+    rate: "6 req/sec",
+    notes: "Official Twitter API",
+    dotColor: "bg-red-500",
+  },
+];
+
+const advantages = [
+  {
+    icon: Wrench,
+    title: "Built For Your Stack",
+    text: "KOL Followers signal + custom feature development.",
+  },
+  {
+    icon: Layers,
+    title: "Full Account Context",
+    text: "Posts, replies, retweets, deleted tweets, reference tweets in one feed.",
+  },
+  {
+    icon: TrendingDown,
+    title: "Lowest Price",
+    text: "Up to 5,000× cheaper than X Official API.",
   },
 ];
 
 const PricingSection = () => {
   return (
-    <section id="pricing" className="py-24 px-6">
+    <section id="pricing" className="py-24 px-6 bg-secondary/30">
       <div className="max-w-7xl mx-auto">
         {/* Section Header */}
         <div className="text-center mb-16">
@@ -57,62 +76,104 @@ const PricingSection = () => {
             PRICING
           </span>
           <h2 className="hero-title text-4xl md:text-6xl lg:text-7xl text-foreground mb-6">
-            <span className="gradient-text">UNLIMITED</span>
+            <span className="gradient-text">BEST VALUE</span>
             <br />
-            ACCESS
+            <span className="text-foreground">PRICING</span>
           </h2>
-          <p className="text-xl text-muted-foreground max-w-2xl mx-auto font-semibold">
-            Monthly subscription — no per-request pricing. The best value in the market.
+          <p className="text-lg md:text-xl text-muted-foreground max-w-3xl mx-auto font-semibold">
+            Account-based pricing. Predictable, transparent, and a fraction of the cost of every alternative.
           </p>
         </div>
 
-        {/* Pricing Cards */}
-        <div className="grid md:grid-cols-3 gap-8">
+        {/* Comparison Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6 mb-12">
           {plans.map((plan, index) => (
             <div
               key={index}
-              className={`glass-card p-8 relative ${
-                plan.highlighted
-                  ? "border-2 border-primary shadow-button scale-105"
-                  : ""
+              className={`relative p-6 rounded-2xl backdrop-blur-sm border-2 transition-all duration-300 hover:-translate-y-1 ${
+                plan.isPawX
+                  ? "bg-white dark:bg-card border-primary shadow-[0_8px_30px_rgba(251,146,60,0.25)] lg:scale-[1.04]"
+                  : "bg-white/80 dark:bg-card/80 border-orange-100 dark:border-orange-900/30 hover:border-orange-200 dark:hover:border-orange-800/50 shadow-[0_4px_20px_rgba(251,146,60,0.08)]"
               }`}
             >
-              {plan.highlighted && (
-                <div className="absolute -top-4 left-1/2 -translate-x-1/2 px-4 py-1 bg-gradient-orange rounded-full text-sm font-bold text-white">
-                  MOST POPULAR
+              {plan.isPawX && (
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-gradient-orange rounded-full text-xs font-bold text-white shadow-button whitespace-nowrap flex items-center gap-1">
+                  <Star className="w-3 h-3 fill-white" />
+                  BEST VALUE
                 </div>
               )}
 
-              <h3 className="text-2xl font-bold text-foreground mb-2">
-                {plan.name}
-              </h3>
-              <p className="text-muted-foreground mb-6">{plan.description}</p>
-
-              <div className="mb-6">
-                <span className="text-4xl font-bold text-foreground">
-                  {plan.price}
-                </span>
-                <span className="text-muted-foreground">{plan.period}</span>
+              <div className="flex items-center gap-2 mb-4">
+                <span className={`w-3 h-3 rounded-full ${plan.dotColor}`} />
+                <h3 className="text-base font-bold text-foreground leading-tight">
+                  {plan.name}
+                </h3>
               </div>
 
-              <ul className="space-y-3 mb-8">
-                {plan.features.map((feature, i) => (
-                  <li key={i} className="flex items-center gap-3">
-                    <div className="w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center">
-                      <Check className="w-3 h-3 text-primary" />
-                    </div>
-                    <span className="text-foreground font-medium">{feature}</span>
-                  </li>
-                ))}
-              </ul>
+              <div className="mb-5">
+                <div className="flex items-baseline gap-1">
+                  <span
+                    className={`text-3xl font-black ${
+                      plan.isPawX ? "gradient-text" : "text-foreground"
+                    }`}
+                  >
+                    {plan.price}
+                  </span>
+                  <span className="text-xs text-muted-foreground font-semibold">
+                    / 1K tweets
+                  </span>
+                </div>
+                {plan.priceNote && (
+                  <span className="text-xs text-primary font-bold">
+                    {plan.priceNote}
+                  </span>
+                )}
+              </div>
 
-              <Button
-                variant={plan.highlighted ? "hero" : "outline"}
-                className="w-full"
-                size="lg"
-              >
-                {plan.price === "Custom" ? "Contact Sales" : "Get Started"}
-              </Button>
+              <ul className="space-y-2 text-sm">
+                <li className="flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground">Model</span>
+                  <span className="font-semibold text-foreground text-right">
+                    {plan.model}
+                  </span>
+                </li>
+                <li className="flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground">Rate</span>
+                  <span className="font-semibold text-foreground text-right">
+                    {plan.rate}
+                  </span>
+                </li>
+                <li className="text-xs text-muted-foreground pt-3 mt-2 border-t border-border/50 leading-relaxed">
+                  {plan.notes}
+                </li>
+              </ul>
+            </div>
+          ))}
+        </div>
+
+        {/* Scope disclaimer */}
+        <p className="text-[11px] text-muted-foreground/80 italic text-center mb-10 max-w-3xl mx-auto leading-relaxed">
+          * PawX pricing only applies to our curated dataset of 500,000+ Web3 accounts. Payment is settled in credits (1 API Call = 1 credit).
+        </p>
+
+        {/* Advantages */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
+          {advantages.map((adv, i) => (
+            <div
+              key={i}
+              className="glass-card p-6 flex items-start gap-4 hover:-translate-y-1 transition-transform"
+            >
+              <div className="w-12 h-12 rounded-xl bg-gradient-orange flex items-center justify-center shrink-0 shadow-soft">
+                <adv.icon className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h4 className="text-base font-bold text-foreground mb-1">
+                  {adv.title}
+                </h4>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  {adv.text}
+                </p>
+              </div>
             </div>
           ))}
         </div>
