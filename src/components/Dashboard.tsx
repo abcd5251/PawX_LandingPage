@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { ArrowDownRight, ArrowUpRight, BarChart3, Check, Copy, ExternalLink, Filter, KeyRound, Link2, LogOut, MessageCircleMore, RefreshCw, Send, ShieldCheck, Users, Wallet } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, BarChart3, BookOpen, Check, Copy, ExternalLink, Filter, KeyRound, Link2, LogOut, MessageCircleMore, RefreshCw, Send, ShieldCheck, Users, Wallet } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import PawIcon from "@/components/PawIcon";
@@ -751,6 +751,26 @@ const Dashboard = ({
                   Save the full key now. If you leave or refresh, it will disappear. Rotating disables the old key and only the new key will work.
                 </p>
               </div>
+
+              <a
+                href="https://github.com/abcd5251/PawX-api"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group flex items-center justify-between gap-3 rounded-xl border border-primary/30 bg-gradient-to-r from-primary/10 to-primary/5 p-4 transition hover:border-primary/60 hover:from-primary/15 hover:to-primary/10 hover:shadow-sm"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary">
+                    <BookOpen className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-foreground">Got your API key? View the docs</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Browse available endpoints, request schemas, and example calls on GitHub.
+                    </p>
+                  </div>
+                </div>
+                <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground transition group-hover:text-primary" />
+              </a>
             </div>
           </motion.section>
 
