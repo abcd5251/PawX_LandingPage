@@ -465,21 +465,49 @@ const Dashboard = ({
   const activeWebhookReceived = paymentStatus?.webhookReceived ?? paymentSession?.webhookReceived ?? activePaymentMatched;
   const activePaymentPaid = paymentStatus?.paid ?? paymentSession?.paid ?? false;
   const activePaymentTxHash = paymentStatus?.paymentTxHash || paymentSession?.paymentTxHash || "";
-  const activePaymentId = paymentStatus?.paymentId || paymentSession?.paymentId || "";
-  const activePaymentRecordedAt = paymentStatus?.paymentRecordedAt || paymentSession?.paymentRecordedAt || "";
-  const activePaymentPaidAt = paymentStatus?.paidAt || paymentSession?.paidAt || "";
-  const activePaymentCredits = paymentStatus?.creditsToAdd || paymentSession?.creditsToAdd || activePaymentPlan?.credits || 0;
-  const hasPendingPaymentSession = activePaymentState === "pending" && Boolean(activePaymentPlan);
-  const isPaymentSynced = activePaymentState === "success" && (activePaymentMatched || activeWebhookReceived);
-  const paymentStatusTone =
-    activePaymentState === "success"
+  const activePaymentMatchStatus = paymentStatus?.paymentMatchStatus ?? paymentSession?.paymentMatchStatus ?? null;
+  const isPaymentDuplicate = activePaymentMatchStatus === "duplicate";
+  const isPaymentConfirmed = activePaymentPaid && Boolean(activePaymentTxHash);
+  const isPaymentSynced = isPaymentConfirmed && (activePaymentMatched || activeWebhookReceived);
+  const hasPendingPaymentSession =
+    activePaymentState === "pending" && Boolean(activePaymentPlan) && !isPaymentDuplicate;
+  const showRefreshButton =
+    !isPaymentDuplicate && !isPaymentSynced && (activePaymentState === "pending" || activePaymentState === "success");
+  const paymentStatusTone = isPaymentDuplicate
+    ? "border-destructive/30 bg-destructive/10 text-destructive"
+    : isPaymentSynced
       ? "border-emerald-300/60 bg-emerald-50 text-emerald-700"
       : activePaymentState === "expired"
         ? "border-destructive/30 bg-destructive/10 text-destructive"
         : "border-amber-300/60 bg-amber-50 text-amber-700";
-  const paymentStatusLabel =
-    activePaymentState === "success" ? "Paid" : activePaymentState === "expired" ? "Expired" : activePaymentState === "pending" ? "Pending" : "";
+  const paymentStatusLabel = isPaymentDuplicate
+    ? "Duplicate"
+    : isPaymentSynced
+      ? "Paid"
+      : activePaymentState === "expired"
+        ? "Expired"
+        : activePaymentState === "success"
+          ? "Confirming"
+          : activePaymentState === "pending"
+            ? "Pending"
+            : "";
   const formattedPaymentExpiry = activePaymentExpiresAt ? new Date(activePaymentExpiresAt).toLocaleString() : "";
+  const paymentMessage = isPaymentDuplicate
+    ? "This payment was already used for another order. Please contact support."
+    : isPaymentSynced
+      ? "Credits were added to your account."
+      : activePaymentState === "expired"
+        ? "This session expired. Start a new top-up below."
+        : isPaymentConfirmed
+          ? "Payment confirmed. Crediting your account..."
+          : activePaymentState === "pending"
+            ? "Finish the checkout in the popup. Status will update automatically."
+            : "";
+  const compactTxHash = activePaymentTxHash
+    ? activePaymentTxHash.length > 16
+      ? `${activePaymentTxHash.slice(0, 8)}…${activePaymentTxHash.slice(-6)}`
+      : activePaymentTxHash
+    : "";
 
   const copyText = async (
     value: string,
@@ -1107,74 +1135,52 @@ const Dashboard = ({
           {activePaymentSessionId ? (
             <div className="mb-5 rounded-3xl border bg-background/70 p-5 md:p-6">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div>
+                <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-3">
-                    <p className="text-base font-bold">Latest Payment Session</p>
+                    <p className="text-base font-bold">Latest Payment</p>
                     {paymentStatusLabel ? (
                       <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${paymentStatusTone}`}>{paymentStatusLabel}</span>
                     ) : null}
                   </div>
-                  <p className="mt-2 break-all text-sm text-muted-foreground">{activePaymentSessionId}</p>
                   {activePaymentPlan ? (
                     <p className="mt-2 text-sm text-muted-foreground">
                       {activePaymentPlan.id} · {activePaymentPlan.amount} USD · {activePaymentPlan.credits.toLocaleString()} credits
                     </p>
                   ) : null}
-                  {formattedPaymentExpiry ? (
-                    <p className="mt-2 text-sm text-muted-foreground">Expires at {formattedPaymentExpiry}</p>
-                  ) : null}
-                  {isPaymentSynced ? (
-                    <p className="mt-2 text-sm text-emerald-700">Webhook sync finished. Credits have been written to the account and the balance can be refreshed safely.</p>
-                  ) : activePaymentState === "success" ? (
-                    <p className="mt-2 text-sm text-amber-700">Payment is confirmed, but the webhook is still syncing credits. Keep this page open while the status updates.</p>
-                  ) : null}
-                  {activePaymentState === "pending" ? (
-                    <p className="mt-2 text-sm text-amber-700">
-                      Checkout is still open. Re-clicking top up reuses the same popup, so the UI will not create a stack of duplicate checkout windows.
+                  {paymentMessage ? (
+                    <p
+                      className={`mt-2 text-sm ${
+                        isPaymentDuplicate || activePaymentState === "expired"
+                          ? "text-destructive"
+                          : isPaymentSynced
+                            ? "text-emerald-700"
+                            : "text-amber-700"
+                      }`}
+                    >
+                      {paymentMessage}
                     </p>
                   ) : null}
-                  {activePaymentCredits ? (
-                    <p className="mt-2 text-sm text-muted-foreground">Credits to add after successful webhook sync: {activePaymentCredits.toLocaleString()}</p>
+                  {activePaymentState === "pending" && formattedPaymentExpiry ? (
+                    <p className="mt-2 text-xs text-muted-foreground">Expires at {formattedPaymentExpiry}</p>
                   ) : null}
-                  {(activePaymentPaid || activePaymentMatched || activeWebhookReceived) && (
-                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                      <span className={`rounded-full border px-3 py-1 ${activePaymentPaid ? "border-emerald-300/60 bg-emerald-50 text-emerald-700" : "bg-background"}`}>
-                        {activePaymentPaid ? "Invoice paid" : "Invoice pending"}
-                      </span>
-                      <span
-                        className={`rounded-full border px-3 py-1 ${
-                          activePaymentMatched || activeWebhookReceived ? "border-emerald-300/60 bg-emerald-50 text-emerald-700" : "bg-background"
-                        }`}
-                      >
-                        {activePaymentMatched || activeWebhookReceived ? "Webhook matched" : "Webhook pending"}
-                      </span>
-                    </div>
-                  )}
-                  {activePaymentPaidAt ? (
-                    <p className="mt-2 text-sm text-muted-foreground">Paid at {new Date(activePaymentPaidAt).toLocaleString()}</p>
-                  ) : null}
-                  {activePaymentRecordedAt ? (
-                    <p className="mt-2 text-sm text-muted-foreground">Recorded at {new Date(activePaymentRecordedAt).toLocaleString()}</p>
-                  ) : null}
-                  {activePaymentId ? (
-                    <p className="mt-2 break-all text-xs text-muted-foreground">Payment ID: {activePaymentId}</p>
-                  ) : null}
-                  {activePaymentTxHash ? (
-                    <p className="mt-2 break-all text-xs text-muted-foreground">Tx Hash: {activePaymentTxHash}</p>
+                  {compactTxHash ? (
+                    <p className="mt-2 text-xs text-muted-foreground">Tx: {compactTxHash}</p>
                   ) : null}
                 </div>
 
                 <div className="flex flex-col gap-3 sm:flex-row lg:flex-col">
-                  {activePaymentCheckoutUrl && activePaymentState === "pending" ? (
+                  {activePaymentCheckoutUrl && activePaymentState === "pending" && !isPaymentDuplicate ? (
                     <Button variant="outline" onClick={onOpenPaymentCheckout}>
                       <ExternalLink className="h-4 w-4" />
                       Continue Checkout
                     </Button>
                   ) : null}
-                  <Button onClick={() => onCheckPaymentStatus(activePaymentSessionId)} disabled={isCheckingPaymentStatus}>
-                    <RefreshCw className={`h-4 w-4 ${isCheckingPaymentStatus ? "animate-spin" : ""}`} />
-                    {isCheckingPaymentStatus ? "Refreshing..." : "Refresh Status"}
-                  </Button>
+                  {showRefreshButton ? (
+                    <Button onClick={() => onCheckPaymentStatus(activePaymentSessionId)} disabled={isCheckingPaymentStatus}>
+                      <RefreshCw className={`h-4 w-4 ${isCheckingPaymentStatus ? "animate-spin" : ""}`} />
+                      {isCheckingPaymentStatus ? "Refreshing..." : "Refresh Status"}
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             </div>

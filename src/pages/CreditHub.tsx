@@ -566,6 +566,7 @@ const CreditHub = () => {
                   paidAt: nextPaymentStatus.paidAt,
                   paymentId: nextPaymentStatus.paymentId,
                   paymentMatched: nextPaymentStatus.paymentMatched,
+                  paymentMatchStatus: nextPaymentStatus.paymentMatchStatus,
                   paymentRecordedAt: nextPaymentStatus.paymentRecordedAt,
                   paymentTxHash: nextPaymentStatus.paymentTxHash,
                   webhookReceived: nextPaymentStatus.webhookReceived,
@@ -576,24 +577,32 @@ const CreditHub = () => {
               : currentSession,
         );
 
+        const paymentConfirmed = nextPaymentStatus.paid && Boolean(nextPaymentStatus.paymentTxHash);
         const webhookSynced = nextPaymentStatus.paymentMatched || nextPaymentStatus.webhookReceived;
+        const isDuplicate = nextPaymentStatus.paymentMatchStatus === "duplicate";
 
-        if (nextPaymentStatus.status === "success" && webhookSynced) {
+        if (isDuplicate) {
+          closePaymentPopup();
+          paymentPollingSessionIdRef.current = null;
+          paymentPollingStartedAtRef.current = null;
+          setStatusMessage("");
+          setAuthError("This payment was already used for another order. Please contact support.");
+        } else if (nextPaymentStatus.status === "success" && paymentConfirmed && webhookSynced) {
           closePaymentPopup();
           await refreshProfile();
           paymentPollingSessionIdRef.current = null;
           paymentPollingStartedAtRef.current = null;
-          setStatusMessage("Payment completed successfully. Credits and account balances were refreshed.");
-        } else if (nextPaymentStatus.status === "success") {
-          setStatusMessage("Payment was confirmed. Waiting for the webhook to finish syncing credits to your account.");
+          setStatusMessage("Payment completed. Credits added to your account.");
+        } else if (nextPaymentStatus.status === "success" && paymentConfirmed) {
+          setStatusMessage("Payment confirmed. Crediting your account...");
         } else if (nextPaymentStatus.status === "expired") {
           closePaymentPopup();
           paymentPollingSessionIdRef.current = null;
           paymentPollingStartedAtRef.current = null;
           setStatusMessage("");
-          setAuthError("This payment session has expired. Please create a new session and try again.");
+          setAuthError("This payment session has expired. Please start a new top-up.");
         } else if (!options?.silent) {
-          setStatusMessage("Payment session is still pending. Complete the checkout, then refresh the payment status.");
+          setStatusMessage("Waiting for payment. Finish the checkout in the popup.");
         }
 
         return nextPaymentStatus;
@@ -697,6 +706,7 @@ const CreditHub = () => {
           paidAt: nextPaymentSession.paidAt,
           paymentId: nextPaymentSession.paymentId,
           paymentMatched: nextPaymentSession.paymentMatched,
+          paymentMatchStatus: nextPaymentSession.paymentMatchStatus,
           paymentRecordedAt: nextPaymentSession.paymentRecordedAt,
           paymentTxHash: nextPaymentSession.paymentTxHash,
           creditsToAdd: nextPaymentSession.creditsToAdd,
@@ -1056,9 +1066,17 @@ const CreditHub = () => {
   useEffect(() => {
     const currentSessionId = paymentStatus?.sessionId || paymentSession?.id || "";
     const currentStatus = paymentStatus?.status || paymentSession?.status || "pending";
+    const matchStatus = paymentStatus?.paymentMatchStatus ?? paymentSession?.paymentMatchStatus ?? null;
+    const paid = paymentStatus?.paid ?? paymentSession?.paid ?? false;
+    const txHash = paymentStatus?.paymentTxHash ?? paymentSession?.paymentTxHash ?? "";
     const paymentMatched = paymentStatus?.paymentMatched ?? paymentSession?.paymentMatched ?? false;
     const webhookReceived = paymentStatus?.webhookReceived ?? paymentSession?.webhookReceived ?? paymentMatched;
-    const shouldKeepPolling = currentStatus === "pending" || (currentStatus === "success" && !(paymentMatched || webhookReceived));
+    const isFullySynced = paid && Boolean(txHash) && (paymentMatched || webhookReceived);
+    const shouldKeepPolling =
+      matchStatus !== "duplicate" &&
+      currentStatus !== "expired" &&
+      !isFullySynced &&
+      (currentStatus === "pending" || currentStatus === "success");
 
     if (!sessionUser || !isPaymentResultRoute || !currentSessionId || !shouldKeepPolling) {
       return;
@@ -1087,10 +1105,16 @@ const CreditHub = () => {
     handleCheckPaymentStatus,
     isPaymentResultRoute,
     paymentSession?.id,
+    paymentSession?.paid,
     paymentSession?.paymentMatched,
+    paymentSession?.paymentMatchStatus,
+    paymentSession?.paymentTxHash,
     paymentSession?.status,
     paymentSession?.webhookReceived,
+    paymentStatus?.paid,
     paymentStatus?.paymentMatched,
+    paymentStatus?.paymentMatchStatus,
+    paymentStatus?.paymentTxHash,
     paymentStatus?.sessionId,
     paymentStatus?.status,
     paymentStatus?.webhookReceived,

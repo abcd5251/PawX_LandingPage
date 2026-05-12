@@ -99,6 +99,7 @@ export interface ReferralCodeResolution {
 
 export type PaymentPlanId = "Starter" | "Standard" | "Advanced";
 export type PaymentSessionStatus = "pending" | "success" | "expired";
+export type PaymentMatchStatus = "duplicate" | null;
 
 export interface PaymentTokenOut {
   chainId: string;
@@ -132,6 +133,7 @@ export interface PaymentSession {
   paidAt: string | null;
   paymentId: string | null;
   paymentMatched: boolean;
+  paymentMatchStatus: PaymentMatchStatus;
   paymentRecordedAt: string | null;
   paymentTxHash: string | null;
   webhookReceived: boolean;
@@ -152,6 +154,7 @@ export interface PaymentSessionStatusResult {
   paidAt: string | null;
   paymentId: string | null;
   paymentMatched: boolean;
+  paymentMatchStatus: PaymentMatchStatus;
   paymentRecordedAt: string | null;
   paymentTxHash: string | null;
   creditsToAdd: number;
@@ -1077,6 +1080,10 @@ const normalizePaymentSessionStatus = (value: string): PaymentSessionStatus => {
   return "pending";
 };
 
+const normalizePaymentMatchStatus = (value: string): PaymentMatchStatus => {
+  return value.toLowerCase() === "duplicate" ? "duplicate" : null;
+};
+
 export const toPaymentSession = (payload: unknown): PaymentSession => {
   const data = unwrapData(payload);
   const planPayload = readPath(data, ["plan"]);
@@ -1107,6 +1114,9 @@ export const toPaymentSession = (payload: unknown): PaymentSession => {
     paidAt: readString(data, [["paidAt"]]) || null,
     paymentId: readString(data, [["paymentId"]]) || null,
     paymentMatched,
+    paymentMatchStatus: normalizePaymentMatchStatus(
+      readString(data, [["paymentMatchStatus"], ["matchStatus"], ["reconciliationStatus"], ["payment", "matchStatus"]]),
+    ),
     paymentRecordedAt: readString(data, [["paymentRecordedAt"]]) || null,
     paymentTxHash: readString(data, [["paymentTxHash"], ["txHash"]]) || null,
     webhookReceived,
@@ -1135,6 +1145,9 @@ export const toPaymentSessionStatusResult = (payload: unknown): PaymentSessionSt
     paidAt: readString(data, [["paidAt"]]) || null,
     paymentId: readString(data, [["paymentId"]]) || null,
     paymentMatched,
+    paymentMatchStatus: normalizePaymentMatchStatus(
+      readString(data, [["paymentMatchStatus"], ["matchStatus"], ["reconciliationStatus"], ["payment", "matchStatus"]]),
+    ),
     paymentRecordedAt: readString(data, [["paymentRecordedAt"]]) || null,
     paymentTxHash: readString(data, [["paymentTxHash"], ["txHash"]]) || null,
     creditsToAdd: readNumber(data, [["creditsToAdd"]], 0),
