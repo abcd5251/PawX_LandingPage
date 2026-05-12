@@ -54,7 +54,6 @@ interface DashboardProps {
   paymentStatus: PaymentSessionStatusResult | null;
   isCreatingPayment: boolean;
   activePaymentPlanId: PaymentPlanId | null;
-  isCheckingPaymentStatus: boolean;
   telegramWidgetContent: ReactNode;
   onRefreshProfile: () => void;
   onUsageRangeChange: (value: UsageRange) => void;
@@ -67,7 +66,6 @@ interface DashboardProps {
   onBindTelegram: () => void;
   onCreatePayment: (planId: PaymentPlanId, tokenOut: PaymentTokenOut) => void;
   onOpenPaymentCheckout: () => void;
-  onCheckPaymentStatus: (sessionId: string) => void;
   onLogout: () => void;
 }
 
@@ -114,39 +112,16 @@ const TOP_UP_PLANS = [
   highlighted: boolean;
 }>;
 
-type PaymentNetwork = "evm" | "sol";
+const PAYMENT_TOKEN = {
+  id: "base-usdc",
+  label: "Base USDC",
+  chainLabel: "Base · Chain ID 8453",
+  symbol: "USDC",
+  chainId: "8453",
+  address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+} as const;
 
-const PAYMENT_TOKEN_OPTIONS = [
-  {
-    id: "base-usdc",
-    network: "evm",
-    label: "EVM (Base USDC)",
-    chainLabel: "Base · Chain ID 8453",
-    symbol: "USDC",
-    chainId: "8453",
-    address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    description: "Currently support USDC on every EVM chains",
-  },
-  {
-    id: "solana-usdc",
-    network: "sol",
-    label: "Solana",
-    chainLabel: "Solana",
-    symbol: "USDC",
-    chainId: "sol",
-    address: "SOL",
-    description: "Pay with Solana wallets like Phantom or Solflare via KiraPay.",
-  },
-] as const satisfies ReadonlyArray<{
-  id: string;
-  network: PaymentNetwork;
-  label: string;
-  chainLabel: string;
-  symbol: string;
-  chainId: string;
-  address: string;
-  description: string;
-}>;
+const PAYMENT_SUPPORT_DESCRIPTION = "Currently support USDC on every EVM chain and Solana chain.";
 
 const CUSTOM_PLAN = {
   title: "Custom Plan",
@@ -272,7 +247,6 @@ const Dashboard = ({
   paymentStatus,
   isCreatingPayment,
   activePaymentPlanId,
-  isCheckingPaymentStatus,
   telegramWidgetContent,
   onRefreshProfile,
   onUsageRangeChange,
@@ -285,12 +259,10 @@ const Dashboard = ({
   onBindTelegram,
   onCreatePayment,
   onOpenPaymentCheckout,
-  onCheckPaymentStatus,
   onLogout,
 }: DashboardProps) => {
   const [copiedValue, setCopiedValue] = useState<"" | "key" | "handle" | "twitterId" | "referralCode" | "referralLink">("");
   const [insightsTab, setInsightsTab] = useState<InsightsTab>("usage");
-  const [paymentNetwork, setPaymentNetwork] = useState<PaymentNetwork>("evm");
 
   const activeProfile = profile ?? {
     ...sessionUser,
@@ -454,8 +426,7 @@ const Dashboard = ({
   const filteredHistoryAddedAmount = creditsHistory.flowSummary.visibleCreditsAdded;
   const filteredHistoryDeductedAmount = Math.abs(creditsHistory.flowSummary.visibleCreditsDeducted);
 
-  const selectedPaymentToken =
-    PAYMENT_TOKEN_OPTIONS.find((option) => option.network === paymentNetwork) ?? PAYMENT_TOKEN_OPTIONS[0];
+  const selectedPaymentToken = PAYMENT_TOKEN;
   const activePaymentSessionId = paymentStatus?.sessionId || paymentStatus?.id || paymentSession?.id || "";
   const activePaymentState = paymentStatus?.status || paymentSession?.status || null;
   const activePaymentCheckoutUrl = paymentSession?.checkoutUrl || "";
@@ -471,8 +442,6 @@ const Dashboard = ({
   const isPaymentSynced = isPaymentConfirmed && (activePaymentMatched || activeWebhookReceived);
   const hasPendingPaymentSession =
     activePaymentState === "pending" && Boolean(activePaymentPlan) && !isPaymentDuplicate;
-  const showRefreshButton =
-    !isPaymentDuplicate && !isPaymentSynced && (activePaymentState === "pending" || activePaymentState === "success");
   const paymentStatusTone = isPaymentDuplicate
     ? "border-destructive/30 bg-destructive/10 text-destructive"
     : isPaymentSynced
@@ -1102,7 +1071,10 @@ const Dashboard = ({
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div className="max-w-2xl">
                 <p className="text-sm font-semibold">Payment</p>
-                <p className="mt-1 text-sm text-muted-foreground">{selectedPaymentToken.description}</p>
+                <p className="mt-1 text-sm text-muted-foreground">{PAYMENT_SUPPORT_DESCRIPTION}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  After paying in the popup, simply refresh this page — your credits will appear automatically.
+                </p>
               </div>
               {!activeProfile.telegramConnected ? (
                 <div className="rounded-2xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-700">
@@ -1110,26 +1082,6 @@ const Dashboard = ({
                 </div>
               ) : null}
             </div>
-
-            <Tabs
-              value={paymentNetwork}
-              onValueChange={(value) => setPaymentNetwork(value as PaymentNetwork)}
-              className="mt-4"
-            >
-              <TabsList className="grid w-full max-w-sm grid-cols-2">
-                <TabsTrigger value="evm" disabled={isCreatingPayment || hasPendingPaymentSession}>
-                  EVM
-                </TabsTrigger>
-                <TabsTrigger value="sol" disabled={isCreatingPayment || hasPendingPaymentSession}>
-                  Solana
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-            {hasPendingPaymentSession ? (
-              <p className="mt-3 text-xs text-muted-foreground">
-                Network switch is locked while a checkout session is pending. Finish or let the current session expire to choose another network.
-              </p>
-            ) : null}
           </div>
 
           {activePaymentSessionId ? (
@@ -1168,20 +1120,14 @@ const Dashboard = ({
                   ) : null}
                 </div>
 
-                <div className="flex flex-col gap-3 sm:flex-row lg:flex-col">
-                  {activePaymentCheckoutUrl && activePaymentState === "pending" && !isPaymentDuplicate ? (
+                {activePaymentCheckoutUrl && activePaymentState === "pending" && !isPaymentDuplicate ? (
+                  <div className="flex flex-col gap-3 sm:flex-row lg:flex-col">
                     <Button variant="outline" onClick={onOpenPaymentCheckout}>
                       <ExternalLink className="h-4 w-4" />
                       Continue Checkout
                     </Button>
-                  ) : null}
-                  {showRefreshButton ? (
-                    <Button onClick={() => onCheckPaymentStatus(activePaymentSessionId)} disabled={isCheckingPaymentStatus}>
-                      <RefreshCw className={`h-4 w-4 ${isCheckingPaymentStatus ? "animate-spin" : ""}`} />
-                      {isCheckingPaymentStatus ? "Refreshing..." : "Refresh Status"}
-                    </Button>
-                  ) : null}
-                </div>
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : null}

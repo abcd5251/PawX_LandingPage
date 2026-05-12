@@ -1161,7 +1161,6 @@ const CreditHub = () => {
       paymentStatus={paymentStatus}
       isCreatingPayment={isCreatingPayment}
       activePaymentPlanId={activePaymentPlanId}
-      isCheckingPaymentStatus={isCheckingPaymentStatus}
       telegramWidgetContent={
         !telegramLinked ? (
           <div
@@ -1219,9 +1218,6 @@ const CreditHub = () => {
       }}
       onOpenPaymentCheckout={() => {
         handleOpenPaymentCheckout();
-      }}
-      onCheckPaymentStatus={(sessionId) => {
-        void handleCheckPaymentStatus(sessionId);
       }}
       onLogout={() => {
         void handleLogout();
