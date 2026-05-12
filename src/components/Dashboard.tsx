@@ -114,17 +114,39 @@ const TOP_UP_PLANS = [
   highlighted: boolean;
 }>;
 
+type PaymentNetwork = "evm" | "sol";
+
 const PAYMENT_TOKEN_OPTIONS = [
   {
     id: "base-usdc",
-    label: "Base USDC",
+    network: "evm",
+    label: "EVM (Base USDC)",
     chainLabel: "Base · Chain ID 8453",
     symbol: "USDC",
     chainId: "8453",
     address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    description: "Official USDC on Base, ready for the current KiraPay checkout flow.",
+    description: "Currently support USDC on every EVM chains",
   },
-] as const;
+  {
+    id: "solana-usdc",
+    network: "sol",
+    label: "Solana",
+    chainLabel: "Solana",
+    symbol: "USDC",
+    chainId: "sol",
+    address: "SOL",
+    description: "Pay with Solana wallets like Phantom or Solflare via KiraPay.",
+  },
+] as const satisfies ReadonlyArray<{
+  id: string;
+  network: PaymentNetwork;
+  label: string;
+  chainLabel: string;
+  symbol: string;
+  chainId: string;
+  address: string;
+  description: string;
+}>;
 
 const CUSTOM_PLAN = {
   title: "Custom Plan",
@@ -268,6 +290,7 @@ const Dashboard = ({
 }: DashboardProps) => {
   const [copiedValue, setCopiedValue] = useState<"" | "key" | "handle" | "twitterId" | "referralCode" | "referralLink">("");
   const [insightsTab, setInsightsTab] = useState<InsightsTab>("usage");
+  const [paymentNetwork, setPaymentNetwork] = useState<PaymentNetwork>("evm");
 
   const activeProfile = profile ?? {
     ...sessionUser,
@@ -431,7 +454,8 @@ const Dashboard = ({
   const filteredHistoryAddedAmount = creditsHistory.flowSummary.visibleCreditsAdded;
   const filteredHistoryDeductedAmount = Math.abs(creditsHistory.flowSummary.visibleCreditsDeducted);
 
-  const selectedPaymentToken = PAYMENT_TOKEN_OPTIONS[0];
+  const selectedPaymentToken =
+    PAYMENT_TOKEN_OPTIONS.find((option) => option.network === paymentNetwork) ?? PAYMENT_TOKEN_OPTIONS[0];
   const activePaymentSessionId = paymentStatus?.sessionId || paymentStatus?.id || paymentSession?.id || "";
   const activePaymentState = paymentStatus?.status || paymentSession?.status || null;
   const activePaymentCheckoutUrl = paymentSession?.checkoutUrl || "";
@@ -1050,7 +1074,7 @@ const Dashboard = ({
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div className="max-w-2xl">
                 <p className="text-sm font-semibold">Payment</p>
-                <p className="mt-1 text-sm text-muted-foreground">Currently support USDC on every EVM chains</p>
+                <p className="mt-1 text-sm text-muted-foreground">{selectedPaymentToken.description}</p>
               </div>
               {!activeProfile.telegramConnected ? (
                 <div className="rounded-2xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-700">
@@ -1059,6 +1083,25 @@ const Dashboard = ({
               ) : null}
             </div>
 
+            <Tabs
+              value={paymentNetwork}
+              onValueChange={(value) => setPaymentNetwork(value as PaymentNetwork)}
+              className="mt-4"
+            >
+              <TabsList className="grid w-full max-w-sm grid-cols-2">
+                <TabsTrigger value="evm" disabled={isCreatingPayment || hasPendingPaymentSession}>
+                  EVM
+                </TabsTrigger>
+                <TabsTrigger value="sol" disabled={isCreatingPayment || hasPendingPaymentSession}>
+                  Solana
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+            {hasPendingPaymentSession ? (
+              <p className="mt-3 text-xs text-muted-foreground">
+                Network switch is locked while a checkout session is pending. Finish or let the current session expire to choose another network.
+              </p>
+            ) : null}
           </div>
 
           {activePaymentSessionId ? (
