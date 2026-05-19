@@ -674,11 +674,6 @@ const CreditHub = () => {
       setAuthError("");
       setStatusMessage("");
 
-      if (!telegramConnected) {
-        setAuthError("Link Telegram before creating a KiraPay payment session.");
-        return;
-      }
-
       if (paymentSession?.status === "pending" && paymentSession.checkoutUrl) {
         const popupOpened = openPaymentPopup(paymentSession.checkoutUrl);
 

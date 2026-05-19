@@ -1076,11 +1076,6 @@ const Dashboard = ({
                   After paying in the popup, simply refresh this page — your credits will appear automatically.
                 </p>
               </div>
-              {!activeProfile.telegramConnected ? (
-                <div className="rounded-2xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                  Link Telegram first.
-                </div>
-              ) : null}
             </div>
           </div>
 
@@ -1183,7 +1178,7 @@ const Dashboard = ({
                       address: selectedPaymentToken.address,
                     })
                   }
-                  disabled={isCreatingPayment || !activeProfile.telegramConnected || (hasPendingPaymentSession && activePaymentPlan?.id !== plan.id)}
+                  disabled={isCreatingPayment || (hasPendingPaymentSession && activePaymentPlan?.id !== plan.id)}
                 >
                   {isCreatingPayment && activePaymentPlanId === plan.id
                     ? "Creating Session..."
