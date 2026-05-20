@@ -31,6 +31,14 @@ const plans: Plan[] = [
     dotColor: "bg-yellow-500",
   },
   {
+    name: "Rapid API (twttrapi)",
+    price: "$0.25",
+    model: "Monthly subscription",
+    rate: "10 req/sec",
+    notes: "Locked monthly fee · Hard request cap with bandwidth overage at $0.001/MB",
+    dotColor: "bg-blue-500",
+  },
+  {
     name: "Apify (Tweet Scraper V2)",
     price: "$0.40",
     model: "Pay-as-you-go",
@@ -86,7 +94,7 @@ const PricingSection = () => {
         </div>
 
         {/* Comparison Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6 mb-12">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-5 sm:gap-6 mb-12">
           {plans.map((plan, index) => (
             <div
               key={index}
