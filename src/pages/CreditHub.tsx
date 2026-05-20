@@ -108,14 +108,6 @@ const getReadableUsageError = (error: unknown, range: UsageRange) => {
   return getReadableAuthError(error);
 };
 
-const getReadablePaymentError = (error: unknown, telegramConnected: boolean) => {
-  if (error instanceof CreditHubApiError && error.status === 403 && !telegramConnected) {
-    return "Payments require a Telegram-linked account before a KiraPay session can be created.";
-  }
-
-  return getReadableAuthError(error);
-};
-
 const DEFAULT_CREDITS_HISTORY_FILTERS: Required<GetCreditsHistoryQuery> = {
   direction: "all",
   range: "30d",
@@ -669,8 +661,6 @@ const CreditHub = () => {
         return;
       }
 
-      const telegramConnected = telegramLinked;
-
       setAuthError("");
       setStatusMessage("");
 
@@ -720,13 +710,13 @@ const CreditHub = () => {
         setStatusMessage(`Payment session created for ${planId}. The KiraPay checkout was opened in a single popup window.`);
       } catch (error) {
         setStatusMessage("");
-        setAuthError(getReadablePaymentError(error, telegramConnected));
+        setAuthError(getReadableAuthError(error));
       } finally {
         setIsCreatingPayment(false);
         setActivePaymentPlanId(null);
       }
     },
-    [openPaymentPopup, paymentSession, sessionUser, telegramLinked],
+    [openPaymentPopup, paymentSession, sessionUser],
   );
 
   const handleOpenPaymentCheckout = useCallback(() => {
